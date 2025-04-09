@@ -3,12 +3,14 @@ Profile Editor - Main application frame
 """
 
 import wx
+import wx.adv
 import json
 import os
 import time
 import threading
 import numpy as np
 import pyautogui
+import copy
 
 from pflib.utils import APP_TITLE, APP_VERSION
 from pflib.menu_panel import MenuPanel
@@ -23,8 +25,23 @@ class ProfileEditorFrame(wx.Frame):
         self.profile_data = {}
         self.current_file = None
         self.is_changed = False
+        self.clipboard = {
+            'menu': None,
+            'conditions': [],  # Now a list for multiple items
+            'elements': []     # Now a list for multiple items
+        }
         
         self.init_ui()
+        
+        # Create a global keyboard shortcut table
+        accel_tbl = wx.AcceleratorTable([
+            (wx.ACCEL_CTRL, ord('S'), wx.ID_SAVE),
+        ])
+        self.SetAcceleratorTable(accel_tbl)
+        
+        # Bind keyboard events
+        self.Bind(wx.EVT_MENU, self.on_save, id=wx.ID_SAVE)
+        
         self.Center()
         
         # Initialize with default main_menu
@@ -40,10 +57,16 @@ class ProfileEditorFrame(wx.Frame):
         file_menu = wx.Menu()
         new_item = file_menu.Append(wx.ID_NEW, "New Profile", "Create a new profile")
         open_item = file_menu.Append(wx.ID_OPEN, "Open Profile", "Open an existing profile")
-        save_item = file_menu.Append(wx.ID_SAVE, "Save Profile", "Save current profile")
+        save_item = file_menu.Append(wx.ID_SAVE, "Save Profile\tCtrl+S", "Save current profile")
         save_as_item = file_menu.Append(wx.ID_SAVEAS, "Save Profile As", "Save current profile with a new name")
         file_menu.AppendSeparator()
         exit_item = file_menu.Append(wx.ID_EXIT, "Exit", "Exit the application")
+        
+        # Edit Menu
+        edit_menu = wx.Menu()
+        copy_menu_item = edit_menu.Append(wx.ID_ANY, "Copy Menu\tCtrl+Shift+C", "Copy the current menu")
+        duplicate_menu_item = edit_menu.Append(wx.ID_ANY, "Duplicate Menu", "Duplicate the current menu")
+        rename_menu_item = edit_menu.Append(wx.ID_ANY, "Rename Menu", "Rename the current menu")
         
         # Tools Menu
         tools_menu = wx.Menu()
@@ -61,6 +84,11 @@ class ProfileEditorFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_save_as, save_as_item)
         self.Bind(wx.EVT_MENU, self.on_exit, exit_item)
         
+        # Bind edit menu events
+        self.Bind(wx.EVT_MENU, self.on_copy_menu_menu_item, copy_menu_item)
+        self.Bind(wx.EVT_MENU, self.on_duplicate_menu, duplicate_menu_item)
+        self.Bind(wx.EVT_MENU, self.on_rename_menu, rename_menu_item)
+        
         # Bind tools menu events
         self.Bind(wx.EVT_MENU, self.on_test_menu, test_item)
         self.Bind(wx.EVT_MENU, self.on_export_python, export_py_item)
@@ -69,6 +97,7 @@ class ProfileEditorFrame(wx.Frame):
         self.Bind(wx.EVT_MENU, self.on_about, about_item)
         
         menubar.Append(file_menu, "&File")
+        menubar.Append(edit_menu, "&Edit")
         menubar.Append(tools_menu, "&Tools")
         menubar.Append(help_menu, "&Help")
         self.SetMenuBar(menubar)
@@ -101,6 +130,186 @@ class ProfileEditorFrame(wx.Frame):
         
         # Bind close event
         self.Bind(wx.EVT_CLOSE, self.on_close)
+    
+    def on_copy_menu_menu_item(self, event):
+        """Handle copy menu menu item"""
+        self.copy_current_menu()
+    
+    def on_duplicate_menu(self, event):
+        """Duplicate the current menu"""
+        # First copy the menu
+        self.copy_current_menu()
+        
+        # Then paste it with a suggested name
+        if not self.clipboard['menu']:
+            wx.MessageBox("No menu to duplicate", "Cannot Duplicate", wx.ICON_INFORMATION)
+            return
+        
+        # Get original menu ID and data
+        orig_id = self.clipboard['menu']['id']
+        menu_data = copy.deepcopy(self.clipboard['menu']['data'])
+        
+        # Create a suggested name
+        suggested_name = f"{orig_id}_copy"
+        counter = 1
+        while suggested_name in self.profile_data:
+            suggested_name = f"{orig_id}_copy{counter}"
+            counter += 1
+        
+        # Ask for new menu ID
+        dialog = wx.TextEntryDialog(
+            self, 
+            f"Enter name for the duplicated menu (original: {orig_id}):",
+            "Duplicate Menu", 
+            suggested_name
+        )
+        
+        if dialog.ShowModal() == wx.ID_OK:
+            new_id = dialog.GetValue().strip()
+            dialog.Destroy()
+            
+            if not new_id:
+                wx.MessageBox("Menu ID cannot be empty", "Error", wx.ICON_ERROR)
+                return
+                
+            if new_id in self.profile_data:
+                if wx.MessageBox(f"Menu '{new_id}' already exists. Replace it?", 
+                              "Confirm", wx.ICON_QUESTION | wx.YES_NO) != wx.YES:
+                    return
+                
+                # Remove existing tab for this menu
+                self.delete_menu(new_id)
+            
+            # Add the new menu with copied data
+            self.profile_data[new_id] = menu_data
+            menu_panel = MenuPanel(self.notebook, new_id, self.profile_data[new_id], self)
+            self.notebook.AddPage(menu_panel, new_id)
+            self.notebook.SetSelection(self.notebook.GetPageCount() - 1)
+            
+            self.mark_profile_changed()
+            self.statusbar.SetStatusText(f"Duplicated menu as: {new_id}")
+        else:
+            dialog.Destroy()
+    
+    def on_rename_menu(self, event):
+        """Rename the current menu"""
+        current_tab = self.notebook.GetSelection()
+        if current_tab == -1:
+            wx.MessageBox("No menu selected", "Cannot Rename", wx.ICON_INFORMATION)
+            return
+            
+        menu_panel = self.notebook.GetPage(current_tab)
+        old_id = menu_panel.menu_id
+        
+        # Ask for new menu ID
+        dialog = wx.TextEntryDialog(
+            self, 
+            f"Enter new name for the menu (current: {old_id}):",
+            "Rename Menu", 
+            old_id
+        )
+        
+        if dialog.ShowModal() == wx.ID_OK:
+            new_id = dialog.GetValue().strip()
+            dialog.Destroy()
+            
+            if not new_id:
+                wx.MessageBox("Menu ID cannot be empty", "Error", wx.ICON_ERROR)
+                return
+                
+            if new_id == old_id:
+                # No change
+                return
+                
+            if new_id in self.profile_data:
+                if wx.MessageBox(f"Menu '{new_id}' already exists. Replace it?", 
+                              "Confirm", wx.ICON_QUESTION | wx.YES_NO) != wx.YES:
+                    return
+                
+                # Remove existing tab for this menu
+                self.delete_menu(new_id)
+            
+            # Get the menu data
+            menu_data = self.profile_data[old_id]
+            
+            # Remove the old menu
+            del self.profile_data[old_id]
+            
+            # Add with new ID
+            self.profile_data[new_id] = menu_data
+            
+            # Update the tab
+            self.notebook.DeletePage(current_tab)
+            menu_panel = MenuPanel(self.notebook, new_id, self.profile_data[new_id], self)
+            self.notebook.InsertPage(current_tab, menu_panel, new_id)
+            self.notebook.SetSelection(current_tab)
+            
+            self.mark_profile_changed()
+            self.statusbar.SetStatusText(f"Renamed menu from {old_id} to {new_id}")
+        else:
+            dialog.Destroy()
+    
+    def copy_current_menu(self):
+        """Copy the currently selected menu"""
+        current_tab = self.notebook.GetSelection()
+        if current_tab == -1:
+            return
+            
+        menu_panel = self.notebook.GetPage(current_tab)
+        menu_id = menu_panel.menu_id
+        
+        # Make a deep copy to avoid reference issues
+        self.clipboard['menu'] = {
+            'id': menu_id,
+            'data': copy.deepcopy(self.profile_data[menu_id])
+        }
+        
+        self.statusbar.SetStatusText(f"Copied menu: {menu_id}")
+
+    def paste_menu(self):
+        """Paste a previously copied menu"""
+        if not self.clipboard['menu']:
+            wx.MessageBox("No menu in clipboard", "Cannot Paste", wx.ICON_INFORMATION)
+            return
+        
+        # Get original menu ID and data
+        orig_id = self.clipboard['menu']['id']
+        menu_data = copy.deepcopy(self.clipboard['menu']['data'])
+        
+        # Ask for new menu ID
+        dialog = wx.TextEntryDialog(
+            self, 
+            f"Enter new ID for the copied menu (original: {orig_id}):",
+            "Paste Menu", 
+            f"{orig_id}_copy"
+        )
+        
+        if dialog.ShowModal() == wx.ID_OK:
+            new_id = dialog.GetValue().strip()
+            dialog.Destroy()
+            
+            if not new_id:
+                wx.MessageBox("Menu ID cannot be empty", "Error", wx.ICON_ERROR)
+                return
+                
+            if new_id in self.profile_data:
+                if wx.MessageBox(f"Menu '{new_id}' already exists. Replace it?", 
+                              "Confirm", wx.ICON_QUESTION | wx.YES_NO) != wx.YES:
+                    return
+                
+                # Remove existing tab for this menu
+                self.delete_menu(new_id)
+            
+            # Add the new menu with copied data
+            self.profile_data[new_id] = menu_data
+            menu_panel = MenuPanel(self.notebook, new_id, self.profile_data[new_id], self)
+            self.notebook.AddPage(menu_panel, new_id)
+            self.notebook.SetSelection(self.notebook.GetPageCount() - 1)
+            
+            self.mark_profile_changed()
+            self.statusbar.SetStatusText(f"Pasted menu as: {new_id}")
+        else:
+            dialog.Destroy()
     
     def on_add_menu(self, event):
         """Add a new menu to the profile"""
