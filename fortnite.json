@@ -3,8 +3,8 @@
     "conditions": [
       {
         "type": "pixel_color",
-        "x": 168,
-        "y": 67,
+        "x": 164,
+        "y": 68,
         "color": [
           13,
           13,
@@ -100,10 +100,10 @@
     "conditions": [
       {
         "type": "pixel_color",
-        "x": 267,
-        "y": 68,
+        "x": 262,
+        "y": 66,
         "color": [
-          15,
+          13,
           13,
           28
         ],
@@ -197,7 +197,7 @@
     "conditions": [
       {
         "type": "pixel_color",
-        "x": 412,
+        "x": 408,
         "y": 69,
         "color": [
           13,
@@ -294,8 +294,8 @@
     "conditions": [
       {
         "type": "pixel_color",
-        "x": 499,
-        "y": 65,
+        "x": 497,
+        "y": 66,
         "color": [
           13,
           13,
@@ -391,10 +391,10 @@
     "conditions": [
       {
         "type": "pixel_color",
-        "x": 647,
-        "y": 66,
+        "x": 661,
+        "y": 69,
         "color": [
-          13,
+          15,
           13,
           28
         ],
@@ -488,8 +488,8 @@
     "conditions": [
       {
         "type": "pixel_color",
-        "x": 760,
-        "y": 70,
+        "x": 757,
+        "y": 67,
         "color": [
           13,
           13,
@@ -585,8 +585,8 @@
     "conditions": [
       {
         "type": "pixel_color",
-        "x": 910,
-        "y": 71,
+        "x": 907,
+        "y": 68,
         "color": [
           13,
           13,
@@ -693,8 +693,8 @@
       },
       {
         "type": "pixel_color",
-        "x": 1048,
-        "y": 79,
+        "x": 1045,
+        "y": 78,
         "color": [
           15,
           13,
