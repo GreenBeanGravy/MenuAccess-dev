@@ -1,14 +1,5 @@
 """
-Accessible Menu Navigation Script - High Performance Edition
-
-This script creates an invisible UI navigation system controlled with keyboard arrows.
-Features:
-- Ultra-fast mouse movement with ctypes
-- Optimized menu detection with minimal CPU usage
-- Advanced caching to prevent redundant processing
-- Asynchronous, non-blocking architecture
-- Multi-threaded design with minimal locking
-- Optimized MSS screen capture
+MenuAccess main script
 """
 
 import ctypes
