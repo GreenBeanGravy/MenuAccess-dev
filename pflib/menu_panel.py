@@ -7,6 +7,8 @@ import wx.lib.scrolledpanel as scrolled
 import copy
 
 from pflib.dialogs import PixelColorConditionDialog, RegionColorConditionDialog, UIElementDialog
+from pflib.bulk_edit_dialog import BulkEditElementsDialog
+from pflib.condition_bulk_edit import BulkEditConditionsDialog
 
 class MenuPanel(scrolled.ScrolledPanel):
     """Panel for displaying and editing menu data"""
@@ -21,7 +23,12 @@ class MenuPanel(scrolled.ScrolledPanel):
         # Bind keyboard events
         self.Bind(wx.EVT_KEY_DOWN, self.on_key_down)
         
+        # Initialize UI
         self.init_ui()
+        
+        # Update reset group options
+        self.update_reset_group_options()
+        
         self.SetupScrolling()
         
     def init_ui(self):
@@ -32,6 +39,27 @@ class MenuPanel(scrolled.ScrolledPanel):
         title = wx.StaticText(self, label=f"Menu: {self.menu_id}")
         title.SetFont(wx.Font(12, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
         header_sizer.Add(title, flag=wx.ALL | wx.ALIGN_CENTER_VERTICAL, border=5)
+        
+        # Add reset index checkbox
+        option_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        
+        self.reset_index_cb = wx.CheckBox(self, label="Reset index when entering menu")
+        self.reset_index_cb.SetValue(self.menu_data.get("reset_index", True))  # Default to True for backward compatibility
+        self.reset_index_cb.Bind(wx.EVT_CHECKBOX, self.on_reset_index_changed)
+        option_sizer.Add(self.reset_index_cb, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=15)
+        
+        # Add reset group option
+        reset_group_label = wx.StaticText(self, label="Reset to group:")
+        # Default group options (will be populated with actual groups later)
+        standard_groups = ["default"]
+        # Use a combobox to allow both selection from predefined options and custom input
+        self.reset_group_ctrl = wx.ComboBox(self, choices=standard_groups,
+                                         value=self.menu_data.get("reset_group", "default"))
+        option_sizer.Add(reset_group_label, flag=wx.LEFT | wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        option_sizer.Add(self.reset_group_ctrl, proportion=1)
+        
+        # Add to header sizer
+        header_sizer.Add(option_sizer, flag=wx.LEFT | wx.ALIGN_CENTER_VERTICAL, border=15)
         
         # Menu action buttons
         duplicate_btn = wx.Button(self, label="Duplicate")
@@ -79,6 +107,9 @@ class MenuPanel(scrolled.ScrolledPanel):
         # Context menu for conditions
         self.conditions_list.Bind(wx.EVT_CONTEXT_MENU, self.on_condition_context_menu)
         
+        # Add double-click for editing conditions
+        self.conditions_list.Bind(wx.EVT_LEFT_DCLICK, self.on_condition_dclick)
+        
         # Install key event handlers for the list
         self.conditions_list.Bind(wx.EVT_KEY_DOWN, self.on_conditions_key)
         
@@ -104,15 +135,19 @@ class MenuPanel(scrolled.ScrolledPanel):
         # Elements list - using just wx.LC_REPORT since multi-select is default
         self.elements_list = wx.ListCtrl(self, style=wx.LC_REPORT, size=(-1, 200))
         self.elements_list.InsertColumn(0, "Name", width=150)
-        self.elements_list.InsertColumn(1, "Type", width=100)
-        self.elements_list.InsertColumn(2, "Position", width=100)
-        self.elements_list.InsertColumn(3, "Submenu", width=100)
+        self.elements_list.InsertColumn(1, "Type", width=80)
+        self.elements_list.InsertColumn(2, "Position", width=80)
+        self.elements_list.InsertColumn(3, "Group", width=80)
+        self.elements_list.InsertColumn(4, "Submenu", width=80)
         
         # Populate elements
         self.update_elements_list()
         
         # Context menu for elements
         self.elements_list.Bind(wx.EVT_CONTEXT_MENU, self.on_element_context_menu)
+        
+        # Add double-click for editing elements
+        self.elements_list.Bind(wx.EVT_LEFT_DCLICK, self.on_element_dclick)
         
         # Install key event handlers for the list
         self.elements_list.Bind(wx.EVT_KEY_DOWN, self.on_elements_key)
@@ -173,6 +208,40 @@ class MenuPanel(scrolled.ScrolledPanel):
         # Let the event propagate to the focused control
         event.Skip()
     
+    def on_condition_dclick(self, event):
+        """Handle double-click on a condition item"""
+        self.on_edit_condition(event)
+    
+    def on_element_dclick(self, event):
+        """Handle double-click on an element item"""
+        self.on_edit_element(event)
+    
+    def update_reset_group_options(self):
+        """Update the available groups in the reset_group dropdown"""
+        # Collect all unique group values from items
+        groups = set(["default"])
+        
+        if "items" in self.menu_data:
+            for item in self.menu_data["items"]:
+                if len(item) > 5 and item[5]:
+                    groups.add(item[5])
+        
+        # Convert to sorted list
+        group_list = sorted(list(groups))
+        
+        # Remember current value
+        current_value = self.reset_group_ctrl.GetValue()
+        
+        # Update control
+        self.reset_group_ctrl.Clear()
+        self.reset_group_ctrl.AppendItems(group_list)
+        
+        # Restore current value if still valid
+        if current_value in group_list:
+            self.reset_group_ctrl.SetValue(current_value)
+        else:
+            self.reset_group_ctrl.SetValue("default")
+    
     def update_conditions_list(self):
         """Update the conditions list with current data"""
         self.conditions_list.DeleteAllItems()
@@ -205,7 +274,8 @@ class MenuPanel(scrolled.ScrolledPanel):
             idx = self.elements_list.InsertItem(i, element[1])  # Name
             self.elements_list.SetItem(idx, 1, element[2])      # Type
             self.elements_list.SetItem(idx, 2, f"({element[0][0]}, {element[0][1]})")  # Position
-            self.elements_list.SetItem(idx, 3, str(element[4] or ""))  # Submenu
+            self.elements_list.SetItem(idx, 3, str(element[5]) if len(element) > 5 else "default")  # Group
+            self.elements_list.SetItem(idx, 4, str(element[4] or ""))  # Submenu
     
     def on_add_pixel_condition(self, event):
         """Add a new pixel color condition"""
@@ -239,16 +309,21 @@ class MenuPanel(scrolled.ScrolledPanel):
     
     def on_condition_context_menu(self, event):
         """Show context menu for conditions list"""
-        if not self.conditions_list.GetSelectedItemCount():
+        selected_count = self.conditions_list.GetSelectedItemCount()
+        if selected_count == 0:
             return
             
         menu = wx.Menu()
         
-        # Only show edit if a single item is selected
-        if self.conditions_list.GetSelectedItemCount() == 1:
+        # Show appropriate edit option based on selection count 
+        if selected_count == 1:
             edit_item = menu.Append(wx.ID_ANY, "Edit Condition")
             self.Bind(wx.EVT_MENU, self.on_edit_condition, edit_item)
-            menu.AppendSeparator()
+        else:
+            edit_item = menu.Append(wx.ID_ANY, f"Edit {selected_count} Conditions...")
+            self.Bind(wx.EVT_MENU, self.on_bulk_edit_conditions, edit_item)
+            
+        menu.AppendSeparator()
         
         copy_item = menu.Append(wx.ID_ANY, "Copy Condition(s)")
         delete_item = menu.Append(wx.ID_ANY, "Delete Condition(s)")
@@ -402,22 +477,28 @@ class MenuPanel(scrolled.ScrolledPanel):
                 
             self.menu_data["items"].append(element)
             self.update_elements_list()
+            self.update_reset_group_options()  # Update available groups
             self.profile_editor.mark_profile_changed()
             
         dialog.Destroy()
     
     def on_element_context_menu(self, event):
         """Show context menu for elements list"""
-        if not self.elements_list.GetSelectedItemCount():
+        selected_count = self.elements_list.GetSelectedItemCount()
+        if selected_count == 0:
             return
             
         menu = wx.Menu()
         
-        # Only show edit if a single item is selected
-        if self.elements_list.GetSelectedItemCount() == 1:
+        # Show appropriate edit option based on selection count
+        if selected_count == 1:
             edit_item = menu.Append(wx.ID_ANY, "Edit Element")
             self.Bind(wx.EVT_MENU, self.on_edit_element, edit_item)
-            menu.AppendSeparator()
+        else:
+            edit_item = menu.Append(wx.ID_ANY, f"Edit {selected_count} Elements...")
+            self.Bind(wx.EVT_MENU, self.on_bulk_edit_elements, edit_item)
+            
+        menu.AppendSeparator()
         
         copy_item = menu.Append(wx.ID_ANY, "Copy Element(s)")
         delete_item = menu.Append(wx.ID_ANY, "Delete Element(s)")
@@ -506,6 +587,7 @@ class MenuPanel(scrolled.ScrolledPanel):
             edited_element = dialog.get_element()
             self.menu_data["items"][selected_idx] = edited_element
             self.update_elements_list()
+            self.update_reset_group_options()
             self.profile_editor.mark_profile_changed()
             
         dialog.Destroy()
@@ -550,8 +632,196 @@ class MenuPanel(scrolled.ScrolledPanel):
         except:
             pass
     
+    def on_save(self):
+        """Save any current state changes to menu_data"""
+        # Ensure the reset_index value is saved in menu_data
+        self.menu_data["reset_index"] = self.reset_index_cb.GetValue()
+        
+        # Save the reset_group value
+        self.menu_data["reset_group"] = self.reset_group_ctrl.GetValue()
+        
+        return True
+        
     def on_delete_menu(self, event):
         """Delete this entire menu"""
         if wx.MessageBox(f"Are you sure you want to delete the menu '{self.menu_id}'?", 
                        "Confirm Delete", wx.YES_NO | wx.ICON_QUESTION) == wx.YES:
             self.profile_editor.delete_menu(self.menu_id)
+    
+    def on_bulk_edit_elements(self, event):
+        """Edit properties for multiple selected elements at once"""
+        # Get all selected indices
+        selected_indices = []
+        item = self.elements_list.GetFirstSelected()
+        while item != -1:
+            selected_indices.append(item)
+            item = self.elements_list.GetNextSelected(item)
+        
+        if not selected_indices:
+            return
+            
+        # Get existing groups to populate dropdown
+        groups = set(["default"])
+        for item in self.menu_data.get("items", []):
+            if len(item) > 5 and item[5]:
+                groups.add(item[5])
+        
+        # Create and show the bulk edit dialog
+        dialog = BulkEditElementsDialog(self)
+        
+        # Update the group choices to include all existing groups
+        dialog.group_ctrl.SetItems(sorted(list(groups)))
+        
+        if dialog.ShowModal() == wx.ID_OK:
+            # Get the changes to apply
+            changes = dialog.get_bulk_changes()
+            
+            if not changes:
+                dialog.Destroy()
+                return  # No changes selected
+            
+            # Apply changes to all selected elements
+            modified = 0
+            for idx in selected_indices:
+                element = self.menu_data["items"][idx]
+                
+                # Apply type change if specified
+                if 'type' in changes:
+                    element[2] = changes['type']
+                
+                # Apply speaks_on_select change if specified
+                if 'speaks_on_select' in changes:
+                    element[3] = changes['speaks_on_select']
+                
+                # Apply submenu_id change if specified
+                if 'submenu_id' in changes:
+                    element[4] = changes['submenu_id']
+                
+                # Apply group change if specified
+                if 'group' in changes:
+                    # Ensure element list is long enough
+                    while len(element) < 6:
+                        element.append(None)
+                    element[5] = changes['group']
+                
+                modified += 1
+            
+            # Update the list
+            self.update_elements_list()
+            
+            # Update available reset groups
+            self.update_reset_group_options()
+            
+            # Mark profile as changed
+            self.profile_editor.mark_profile_changed()
+            
+            # Update status
+            try:
+                parent_frame = wx.GetTopLevelParent(self.GetParent())
+                parent_frame.SetStatusText(f"Applied changes to {modified} elements")
+            except:
+                pass
+        
+        dialog.Destroy()
+    
+    def on_bulk_edit_conditions(self, event):
+        """Edit properties for multiple selected conditions at once"""
+        # Get all selected indices
+        selected_indices = []
+        item = self.conditions_list.GetFirstSelected()
+        while item != -1:
+            selected_indices.append(item)
+            item = self.conditions_list.GetNextSelected(item)
+        
+        if not selected_indices:
+            return
+        
+        # Collect conditions for editing
+        pixel_color_indices = []
+        region_color_indices = []
+        
+        for idx in selected_indices:
+            condition = self.menu_data["conditions"][idx]
+            condition_type = condition.get("type")
+            
+            if condition_type == "pixel_color":
+                pixel_color_indices.append(idx)
+            elif condition_type == "pixel_region_color":
+                region_color_indices.append(idx)
+        
+        # Check if we have any compatible conditions
+        if not pixel_color_indices and not region_color_indices:
+            wx.MessageBox("No compatible conditions selected for bulk editing.", 
+                         "Bulk Edit", wx.ICON_INFORMATION)
+            return
+            
+        # Create and show the bulk edit dialog
+        dialog = BulkEditConditionsDialog(self)
+        
+        if dialog.ShowModal() == wx.ID_OK:
+            # Get the changes to apply
+            changes = dialog.get_bulk_changes()
+            
+            if not changes:
+                dialog.Destroy()
+                return  # No changes selected
+            
+            # Apply changes to all selected compatible conditions
+            modified = 0
+            
+            # Apply to pixel color conditions
+            for idx in pixel_color_indices:
+                condition = self.menu_data["conditions"][idx]
+                
+                # Apply color change if specified
+                if 'color' in changes:
+                    condition['color'] = changes['color']
+                
+                # Apply tolerance change if specified
+                if 'tolerance' in changes:
+                    condition['tolerance'] = changes['tolerance']
+                
+                modified += 1
+            
+            # Apply to region color conditions (only tolerance)
+            for idx in region_color_indices:
+                condition = self.menu_data["conditions"][idx]
+                
+                # Apply color change if specified
+                if 'color' in changes:
+                    condition['color'] = changes['color']
+                
+                # Apply tolerance change if specified
+                if 'tolerance' in changes:
+                    condition['tolerance'] = changes['tolerance']
+                
+                modified += 1
+            
+            # Update the list
+            self.update_conditions_list()
+            
+            # Mark profile as changed
+            self.profile_editor.mark_profile_changed()
+            
+            # Update status
+            try:
+                parent_frame = wx.GetTopLevelParent(self.GetParent())
+                parent_frame.SetStatusText(f"Applied changes to {modified} conditions")
+            except:
+                pass
+        
+        dialog.Destroy()
+    
+    def on_reset_index_changed(self, event):
+        """Handle reset_index checkbox state change"""
+        # Update the menu_data with the new reset_index value
+        self.menu_data["reset_index"] = self.reset_index_cb.GetValue()
+        self.profile_editor.mark_profile_changed()
+        
+        # Update status
+        try:
+            parent_frame = wx.GetTopLevelParent(self.GetParent())
+            value = "will reset" if self.reset_index_cb.GetValue() else "will maintain"
+            parent_frame.SetStatusText(f"Menu '{self.menu_id}' {value} selection index when entered")
+        except:
+            pass

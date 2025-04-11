@@ -3,6 +3,7 @@ Menu condition checking functionality
 """
 
 import numpy as np
+import cv2  # OpenCV for HSV conversion
 
 class MenuCondition:
     """Class for defining and checking menu detection conditions"""
@@ -95,12 +96,29 @@ class MenuCondition:
             pixel_color = screenshot[y, x]
             
             # Convert to RGB for comparison (screenshot is BGR)
-            pixel_color = pixel_color[::-1]
+            pixel_rgb = pixel_color[::-1]
             
-            # Calculate color difference
-            diff = np.sqrt(np.sum((np.array(pixel_color) - np.array(color)) ** 2))
+            # Convert both colors to HSV for more perceptually relevant comparison
+            # First, convert to the format OpenCV expects (0-255 uint8)
+            pixel_rgb_cv = np.array([[pixel_rgb]], dtype=np.uint8)
+            expected_rgb_cv = np.array([[color]], dtype=np.uint8)
             
-            return diff <= tolerance
+            # Convert RGB to HSV
+            pixel_hsv = cv2.cvtColor(pixel_rgb_cv, cv2.COLOR_RGB2HSV)[0][0]
+            expected_hsv = cv2.cvtColor(expected_rgb_cv, cv2.COLOR_RGB2HSV)[0][0]
+            
+            # Hue is circular, so we need special handling
+            h1, s1, v1 = pixel_hsv.astype(float)
+            h2, s2, v2 = expected_hsv.astype(float)
+            
+            # Handle hue wrapping (0 and 180 are adjacent in HSV)
+            h_diff = min(abs(h1 - h2), 180.0 - abs(h1 - h2))
+            
+            # Weight hue more than saturation and value for better color detection
+            # regardless of lighting changes
+            weighted_diff = (h_diff * 2.0) + (abs(s1 - s2) / 2.0) + (abs(v1 - v2) / 4.0)
+            
+            return weighted_diff <= tolerance
         except Exception as e:
             print(f"Error checking pixel color: {str(e)}")
             return False
@@ -137,11 +155,33 @@ class MenuCondition:
             # Convert BGR to RGB
             region_rgb = region[:, :, ::-1]
             
-            # Calculate color differences for each pixel
-            color_diffs = np.sqrt(np.sum((region_rgb - np.array(color)) ** 2, axis=2))
+            # Convert region to HSV for better color comparison
+            region_hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
+            
+            # Convert expected color to HSV
+            expected_rgb_cv = np.array([[color]], dtype=np.uint8)
+            expected_hsv = cv2.cvtColor(expected_rgb_cv, cv2.COLOR_RGB2HSV)[0][0]
+            
+            # Extract HSV channels and convert to float to avoid overflow
+            h = region_hsv[:,:,0].astype(float)
+            s = region_hsv[:,:,1].astype(float)
+            v = region_hsv[:,:,2].astype(float)
+            h_expected = float(expected_hsv[0])
+            s_expected = float(expected_hsv[1])
+            v_expected = float(expected_hsv[2])
+            
+            # Calculate hue difference (consider circular nature of hue)
+            h_diff = np.minimum(np.abs(h - h_expected), 180.0 - np.abs(h - h_expected))
+            
+            # Calculate saturation and value differences
+            s_diff = np.abs(s - s_expected)
+            v_diff = np.abs(v - v_expected)
+            
+            # Weight hue more than saturation and value
+            weighted_diffs = (h_diff * 2.0) + (s_diff / 2.0) + (v_diff / 4.0)
             
             # Count matching pixels
-            matching_pixels = np.count_nonzero(color_diffs <= tolerance)
+            matching_pixels = np.count_nonzero(weighted_diffs <= tolerance)
             total_pixels = (x2 - x1) * (y2 - y1)
             
             # Check if enough pixels match

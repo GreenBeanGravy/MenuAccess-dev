@@ -13,6 +13,7 @@
         "tolerance": 10
       }
     ],
+    "reset_index": false,
     "items": [
       [
         [
@@ -22,7 +23,8 @@
         "PLAY",
         "tab",
         false,
-        "lobby-play"
+        "lobby-play",
+        "tab-control"
       ],
       [
         [
@@ -32,7 +34,8 @@
         "LOCKER",
         "tab",
         false,
-        "lobby-locker"
+        "lobby-locker",
+        "tab-control"
       ],
       [
         [
@@ -42,7 +45,8 @@
         "SHOP",
         "tab",
         false,
-        "lobby-shop"
+        "lobby-shop",
+        "tab-control"
       ],
       [
         [
@@ -52,7 +56,8 @@
         "PASSES",
         "tab",
         false,
-        "lobby-passes"
+        "lobby-passes",
+        "tab-control"
       ],
       [
         [
@@ -62,7 +67,8 @@
         "QUESTS",
         "tab",
         false,
-        "lobby-quests"
+        "lobby-quests",
+        "tab-control"
       ],
       [
         [
@@ -72,7 +78,8 @@
         "COMPETE",
         "tab",
         false,
-        "lobby-compete"
+        "lobby-compete",
+        "tab-control"
       ],
       [
         [
@@ -82,7 +89,8 @@
         "CAREER",
         "tab",
         false,
-        "lobby-career"
+        "lobby-career",
+        "tab-control"
       ],
       [
         [
@@ -92,7 +100,8 @@
         "vBUCKS",
         "tab",
         false,
-        "lobby-vbucks"
+        "lobby-vbucks",
+        "tab-control"
       ]
     ]
   },
@@ -110,6 +119,7 @@
         "tolerance": 10
       }
     ],
+    "reset_index": false,
     "items": [
       [
         [
@@ -119,7 +129,8 @@
         "PLAY",
         "tab",
         false,
-        "lobby-play"
+        "lobby-play",
+        "tab-control"
       ],
       [
         [
@@ -129,7 +140,8 @@
         "LOCKER",
         "tab",
         false,
-        "lobby-locker"
+        "lobby-locker",
+        "tab-control"
       ],
       [
         [
@@ -139,7 +151,8 @@
         "SHOP",
         "tab",
         false,
-        "lobby-shop"
+        "lobby-shop",
+        "tab-control"
       ],
       [
         [
@@ -149,7 +162,8 @@
         "PASSES",
         "tab",
         false,
-        "lobby-passes"
+        "lobby-passes",
+        "tab-control"
       ],
       [
         [
@@ -159,7 +173,8 @@
         "QUESTS",
         "tab",
         false,
-        "lobby-quests"
+        "lobby-quests",
+        "tab-control"
       ],
       [
         [
@@ -169,7 +184,8 @@
         "COMPETE",
         "tab",
         false,
-        "lobby-compete"
+        "lobby-compete",
+        "tab-control"
       ],
       [
         [
@@ -179,7 +195,8 @@
         "CAREER",
         "tab",
         false,
-        "lobby-career"
+        "lobby-career",
+        "tab-control"
       ],
       [
         [
@@ -189,7 +206,8 @@
         "vBUCKS",
         "tab",
         false,
-        "lobby-vbucks"
+        "lobby-vbucks",
+        "tab-control"
       ]
     ]
   },
@@ -207,6 +225,7 @@
         "tolerance": 10
       }
     ],
+    "reset_index": false,
     "items": [
       [
         [
@@ -216,7 +235,8 @@
         "PLAY",
         "tab",
         false,
-        "lobby-play"
+        "lobby-play",
+        "tab-control"
       ],
       [
         [
@@ -226,7 +246,8 @@
         "LOCKER",
         "tab",
         false,
-        "lobby-locker"
+        "lobby-locker",
+        "tab-control"
       ],
       [
         [
@@ -236,7 +257,8 @@
         "SHOP",
         "tab",
         false,
-        "lobby-shop"
+        "lobby-shop",
+        "tab-control"
       ],
       [
         [
@@ -246,7 +268,8 @@
         "PASSES",
         "tab",
         false,
-        "lobby-passes"
+        "lobby-passes",
+        "tab-control"
       ],
       [
         [
@@ -256,7 +279,8 @@
         "QUESTS",
         "tab",
         false,
-        "lobby-quests"
+        "lobby-quests",
+        "tab-control"
       ],
       [
         [
@@ -266,7 +290,8 @@
         "COMPETE",
         "tab",
         false,
-        "lobby-compete"
+        "lobby-compete",
+        "tab-control"
       ],
       [
         [
@@ -276,7 +301,8 @@
         "CAREER",
         "tab",
         false,
-        "lobby-career"
+        "lobby-career",
+        "tab-control"
       ],
       [
         [
@@ -286,7 +312,8 @@
         "vBUCKS",
         "tab",
         false,
-        "lobby-vbucks"
+        "lobby-vbucks",
+        "tab-control"
       ]
     ]
   },
@@ -304,6 +331,7 @@
         "tolerance": 10
       }
     ],
+    "reset_index": false,
     "items": [
       [
         [
@@ -313,7 +341,8 @@
         "PLAY",
         "tab",
         false,
-        "lobby-play"
+        "lobby-play",
+        "tab-control"
       ],
       [
         [
@@ -323,7 +352,8 @@
         "LOCKER",
         "tab",
         false,
-        "lobby-locker"
+        "lobby-locker",
+        "tab-control"
       ],
       [
         [
@@ -333,7 +363,8 @@
         "SHOP",
         "tab",
         false,
-        "lobby-shop"
+        "lobby-shop",
+        "tab-control"
       ],
       [
         [
@@ -343,7 +374,8 @@
         "PASSES",
         "tab",
         false,
-        "lobby-passes"
+        "lobby-passes",
+        "tab-control"
       ],
       [
         [
@@ -353,7 +385,8 @@
         "QUESTS",
         "tab",
         false,
-        "lobby-quests"
+        "lobby-quests",
+        "tab-control"
       ],
       [
         [
@@ -363,7 +396,8 @@
         "COMPETE",
         "tab",
         false,
-        "lobby-compete"
+        "lobby-compete",
+        "tab-control"
       ],
       [
         [
@@ -373,7 +407,8 @@
         "CAREER",
         "tab",
         false,
-        "lobby-career"
+        "lobby-career",
+        "tab-control"
       ],
       [
         [
@@ -383,7 +418,8 @@
         "vBUCKS",
         "tab",
         false,
-        "lobby-vbucks"
+        "lobby-vbucks",
+        "tab-control"
       ]
     ]
   },
@@ -401,6 +437,7 @@
         "tolerance": 10
       }
     ],
+    "reset_index": false,
     "items": [
       [
         [
@@ -410,7 +447,8 @@
         "PLAY",
         "tab",
         false,
-        "lobby-play"
+        "lobby-play",
+        "tab-control"
       ],
       [
         [
@@ -420,7 +458,8 @@
         "LOCKER",
         "tab",
         false,
-        "lobby-locker"
+        "lobby-locker",
+        "tab-control"
       ],
       [
         [
@@ -430,7 +469,8 @@
         "SHOP",
         "tab",
         false,
-        "lobby-shop"
+        "lobby-shop",
+        "tab-control"
       ],
       [
         [
@@ -440,7 +480,8 @@
         "PASSES",
         "tab",
         false,
-        "lobby-passes"
+        "lobby-passes",
+        "tab-control"
       ],
       [
         [
@@ -450,7 +491,8 @@
         "QUESTS",
         "tab",
         false,
-        "lobby-quests"
+        "lobby-quests",
+        "tab-control"
       ],
       [
         [
@@ -460,7 +502,8 @@
         "COMPETE",
         "tab",
         false,
-        "lobby-compete"
+        "lobby-compete",
+        "tab-control"
       ],
       [
         [
@@ -470,7 +513,8 @@
         "CAREER",
         "tab",
         false,
-        "lobby-career"
+        "lobby-career",
+        "tab-control"
       ],
       [
         [
@@ -480,7 +524,8 @@
         "vBUCKS",
         "tab",
         false,
-        "lobby-vbucks"
+        "lobby-vbucks",
+        "tab-control"
       ]
     ]
   },
@@ -498,6 +543,7 @@
         "tolerance": 10
       }
     ],
+    "reset_index": false,
     "items": [
       [
         [
@@ -507,7 +553,8 @@
         "PLAY",
         "tab",
         false,
-        "lobby-play"
+        "lobby-play",
+        "tab-control"
       ],
       [
         [
@@ -517,7 +564,8 @@
         "LOCKER",
         "tab",
         false,
-        "lobby-locker"
+        "lobby-locker",
+        "tab-control"
       ],
       [
         [
@@ -527,7 +575,8 @@
         "SHOP",
         "tab",
         false,
-        "lobby-shop"
+        "lobby-shop",
+        "tab-control"
       ],
       [
         [
@@ -537,7 +586,8 @@
         "PASSES",
         "tab",
         false,
-        "lobby-passes"
+        "lobby-passes",
+        "tab-control"
       ],
       [
         [
@@ -547,7 +597,8 @@
         "QUESTS",
         "tab",
         false,
-        "lobby-quests"
+        "lobby-quests",
+        "tab-control"
       ],
       [
         [
@@ -557,7 +608,8 @@
         "COMPETE",
         "tab",
         false,
-        "lobby-compete"
+        "lobby-compete",
+        "tab-control"
       ],
       [
         [
@@ -567,7 +619,8 @@
         "CAREER",
         "tab",
         false,
-        "lobby-career"
+        "lobby-career",
+        "tab-control"
       ],
       [
         [
@@ -577,7 +630,8 @@
         "vBUCKS",
         "tab",
         false,
-        "lobby-vbucks"
+        "lobby-vbucks",
+        "tab-control"
       ]
     ]
   },
@@ -595,6 +649,7 @@
         "tolerance": 10
       }
     ],
+    "reset_index": false,
     "items": [
       [
         [
@@ -604,7 +659,8 @@
         "PLAY",
         "tab",
         false,
-        "lobby-play"
+        "lobby-play",
+        "tab-control"
       ],
       [
         [
@@ -614,7 +670,8 @@
         "LOCKER",
         "tab",
         false,
-        "lobby-locker"
+        "lobby-locker",
+        "tab-control"
       ],
       [
         [
@@ -624,7 +681,8 @@
         "SHOP",
         "tab",
         false,
-        "lobby-shop"
+        "lobby-shop",
+        "tab-control"
       ],
       [
         [
@@ -634,7 +692,8 @@
         "PASSES",
         "tab",
         false,
-        "lobby-passes"
+        "lobby-passes",
+        "tab-control"
       ],
       [
         [
@@ -644,7 +703,8 @@
         "QUESTS",
         "tab",
         false,
-        "lobby-quests"
+        "lobby-quests",
+        "tab-control"
       ],
       [
         [
@@ -654,7 +714,8 @@
         "COMPETE",
         "tab",
         false,
-        "lobby-compete"
+        "lobby-compete",
+        "tab-control"
       ],
       [
         [
@@ -664,7 +725,8 @@
         "CAREER",
         "tab",
         false,
-        "lobby-career"
+        "lobby-career",
+        "tab-control"
       ],
       [
         [
@@ -674,7 +736,8 @@
         "vBUCKS",
         "tab",
         false,
-        "lobby-vbucks"
+        "lobby-vbucks",
+        "tab-control"
       ]
     ]
   },
@@ -703,6 +766,7 @@
         "tolerance": 10
       }
     ],
+    "reset_index": false,
     "items": [
       [
         [
@@ -712,7 +776,8 @@
         "PLAY",
         "tab",
         false,
-        "lobby-play"
+        "lobby-play",
+        "tab-control"
       ],
       [
         [
@@ -722,7 +787,8 @@
         "LOCKER",
         "tab",
         false,
-        "lobby-locker"
+        "lobby-locker",
+        "tab-control"
       ],
       [
         [
@@ -732,7 +798,8 @@
         "SHOP",
         "tab",
         false,
-        "lobby-shop"
+        "lobby-shop",
+        "tab-control"
       ],
       [
         [
@@ -742,7 +809,8 @@
         "PASSES",
         "tab",
         false,
-        "lobby-passes"
+        "lobby-passes",
+        "tab-control"
       ],
       [
         [
@@ -752,7 +820,8 @@
         "QUESTS",
         "tab",
         false,
-        "lobby-quests"
+        "lobby-quests",
+        "tab-control"
       ],
       [
         [
@@ -762,7 +831,8 @@
         "COMPETE",
         "tab",
         false,
-        "lobby-compete"
+        "lobby-compete",
+        "tab-control"
       ],
       [
         [
@@ -772,7 +842,8 @@
         "CAREER",
         "tab",
         false,
-        "lobby-career"
+        "lobby-career",
+        "tab-control"
       ],
       [
         [
@@ -782,8 +853,10 @@
         "vBUCKS",
         "tab",
         false,
-        "lobby-vbucks"
+        "lobby-vbucks",
+        "tab-control"
       ]
-    ]
+    ],
+    "reset_group": "default"
   }
 }

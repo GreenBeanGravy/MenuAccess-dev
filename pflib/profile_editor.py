@@ -436,6 +436,13 @@ class ProfileEditorFrame(wx.Frame):
             return
             
         try:
+            # Ensure all current page data is saved before writing to file
+            current_tab = self.notebook.GetSelection()
+            if current_tab != -1:
+                current_page = self.notebook.GetPage(current_tab)
+                if hasattr(current_page, 'on_save'):
+                    current_page.on_save()
+            
             with open(self.current_file, 'w') as file:
                 json.dump(self.profile_data, file, indent=2)
             

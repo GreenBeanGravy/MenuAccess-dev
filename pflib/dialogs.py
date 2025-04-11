@@ -11,46 +11,106 @@ from PIL import Image
 from pflib.ui_components import ColorDisplay
 from pflib.utils import get_cursor_tracker
 
-class PixelPickerThread(threading.Thread):
-    """Background thread for pixel picking without blocking UI"""
+class PixelPickerOverlay(wx.Dialog):
+    """Interactive overlay for pixel picking with click-to-select functionality"""
     
     def __init__(self, parent):
-        super().__init__()
+        super().__init__(None, title="Pixel Picker", style=wx.STAY_ON_TOP | wx.FRAME_NO_TASKBAR | wx.NO_BORDER)
         self.parent = parent
-        self.daemon = True  # Thread will exit when main program exits
-        self.stop_event = threading.Event()
         self.result = None
+        
+        # Take a full screenshot for reference
+        self.screenshot = pyautogui.screenshot()
+        screen_width, screen_height = self.screenshot.size
+        
+        # Make it full screen and semi-transparent
+        self.SetTransparent(120)  # More transparent than region selector
+        self.ShowFullScreen(True)
+        
+        # Create a panel to capture mouse events
+        self.panel = wx.Panel(self)
+        self.panel.SetSize(screen_width, screen_height)
+        
+        # Bind events
+        self.panel.Bind(wx.EVT_LEFT_DOWN, self.on_click)
+        self.panel.Bind(wx.EVT_MOTION, self.on_motion)
+        self.panel.Bind(wx.EVT_KEY_DOWN, self.on_key_down)
+        
+        # Set focus for keyboard events
+        self.panel.SetFocus()
+        
+        # Create a status display that follows the mouse
+        self.status_overlay = wx.Frame(None, style=wx.FRAME_NO_TASKBAR | wx.STAY_ON_TOP | wx.NO_BORDER)
+        self.status_overlay.SetTransparent(200)
+        self.status_overlay.SetBackgroundColour(wx.Colour(0, 0, 0))
+        self.status_label = wx.StaticText(self.status_overlay, label="Click to select pixel")
+        self.status_label.SetForegroundColour(wx.WHITE)
+        self.status_overlay.SetSize((200, 30))
+        self.status_overlay.Show()
+        
+        # Instructions at the top of the screen
+        instructions = wx.StaticText(self.panel, label="Click to select pixel, press Esc to cancel")
+        instructions.SetForegroundColour(wx.WHITE)
+        instructions.SetBackgroundColour(wx.Colour(0, 0, 0))
+        font = wx.Font(14, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
+        instructions.SetFont(font)
+        # Center the instructions at the top
+        text_width = instructions.GetSize().width
+        instructions.SetPosition(((screen_width - text_width) // 2, 20))
+        
+        # Start the timer for updating status overlay
+        self.timer = wx.Timer(self)
+        self.Bind(wx.EVT_TIMER, self.on_timer)
+        self.timer.Start(50)  # Update 20 times per second
     
-    def run(self):
-        """Run the picker in background"""
-        # Create keyboard listener
-        def on_key_press(key):
-            if key == keyboard.Key.enter:
-                # Capture current position and color
-                x, y = pyautogui.position()
-                screenshot = pyautogui.screenshot()
-                pixel_color = screenshot.getpixel((x, y))
-                self.result = (x, y, pixel_color)
-                self.stop_event.set()
-                return False  # Stop listener
-            elif key == keyboard.Key.esc:
-                self.stop_event.set()
-                return False  # Stop listener
-            return True
+    def on_timer(self, event):
+        # Update status overlay position to follow mouse
+        mouse_pos = wx.GetMousePosition()
+        self.status_overlay.SetPosition((mouse_pos.x + 15, mouse_pos.y + 15))
         
-        # Start keyboard listener
-        listener = keyboard.Listener(on_press=on_key_press)
-        listener.start()
-        
-        # Wait for done flag or timeout after 30 seconds
-        self.stop_event.wait(30)  # 30 second timeout
-        
-        # Ensure listener is stopped
-        listener.stop()
-        
-        # Notify parent with wx.CallAfter to ensure it happens in the main thread
-        if self.result:
-            wx.CallAfter(self.parent.on_picker_complete, self.result)
+        # Update the label with current position and color
+        x, y = pyautogui.position()
+        try:
+            pixel_color = self.screenshot.getpixel((x, y))
+            self.status_label.SetLabel(f"({x}, {y}) RGB: {pixel_color}")
+            # Adjust the width based on text
+            text_width = self.status_label.GetSize().width
+            self.status_overlay.SetSize((text_width + 20, 30))
+        except:
+            pass
+    
+    def on_click(self, event):
+        """Handle mouse click to select a pixel"""
+        # Get current pixel info
+        x, y = pyautogui.position()
+        try:
+            pixel_color = self.screenshot.getpixel((x, y))
+            self.result = (x, y, pixel_color)
+            self.EndModal(wx.ID_OK)
+        except Exception as e:
+            print(f"Error capturing pixel: {e}")
+    
+    def on_motion(self, event):
+        """Handle mouse movement"""
+        # Update cursor position in status overlay
+        pass
+    
+    def on_key_down(self, event):
+        """Handle key press"""
+        if event.GetKeyCode() == wx.WXK_ESCAPE:
+            self.EndModal(wx.ID_CANCEL)
+        event.Skip()
+    
+    def get_result(self):
+        """Get the selected pixel data"""
+        return self.result
+    
+    def cleanup(self):
+        """Clean up resources"""
+        if self.timer.IsRunning():
+            self.timer.Stop()
+        if self.status_overlay:
+            self.status_overlay.Destroy()
 
 
 class PixelColorConditionDialog(wx.Dialog):
@@ -151,53 +211,35 @@ class PixelColorConditionDialog(wx.Dialog):
         event.Skip()
     
     def on_pick_from_screen(self, event):
-        """Begin the pixel picking process"""
+        """Begin the pixel picking process with click-to-select functionality"""
         # Iconize window to get it out of the way
         self.Iconize(True)
         
-        # Start cursor tracker
-        self.cursor_tracker.start_tracking()
+        # Stop tracker if running
+        if self.cursor_tracker.is_active:
+            self.cursor_tracker.stop_tracking()
         
         # Status text in parent's status bar if available
         try:
             parent_frame = wx.GetTopLevelParent(self.GetParent())
-            parent_frame.SetStatusText("Press Enter to select current position, Esc to cancel")
+            parent_frame.SetStatusText("Click to select a pixel, Esc to cancel")
         except:
             pass
         
-        # Display small instructions label at the top of the screen
-        screen_width, screen_height = wx.DisplaySize()
-        instruction_label = wx.Frame(None, style=wx.FRAME_NO_TASKBAR | wx.STAY_ON_TOP | wx.BORDER_NONE)
-        instruction_label.SetTransparent(200)
-        instruction_label.SetBackgroundColour(wx.Colour(0, 0, 0))
-        instruction_text = wx.StaticText(instruction_label, label="Press Enter to select, Esc to cancel")
-        instruction_text.SetForegroundColour(wx.WHITE)
-        instruction_label.SetSize((300, 30))
-        instruction_label.Centre(wx.HORIZONTAL)
-        instruction_label.SetPosition((screen_width // 2 - 150, 10))
-        instruction_label.Show()
+        # Create and show the pixel picker overlay
+        picker_overlay = PixelPickerOverlay(self)
+        result = picker_overlay.ShowModal()
         
-        # Start picker thread
-        self.picker_thread = PixelPickerThread(self)
-        self.picker_thread.start()
+        # Process result
+        if result == wx.ID_OK and picker_overlay.get_result():
+            self.on_picker_complete(picker_overlay.get_result())
+        else:
+            # User canceled
+            self.on_picker_complete(None)
         
-        # Set a timeout to check if the thread is done
-        wx.CallLater(500, self.check_picker_thread, instruction_label)
-    
-    def check_picker_thread(self, instruction_label):
-        """Check if the picker thread is done"""
-        if self.picker_thread and not self.picker_thread.is_alive():
-            # Thread is done, process result
-            if self.picker_thread.result:
-                self.on_picker_complete(self.picker_thread.result)
-            
-            # Clean up
-            instruction_label.Destroy()
-            self.picker_thread = None
-            return
-        
-        # Thread still running, check again later
-        wx.CallLater(500, self.check_picker_thread, instruction_label)
+        # Clean up
+        picker_overlay.cleanup()
+        picker_overlay.Destroy()
     
     def on_picker_complete(self, result):
         """Handle the completion of the picker thread"""
@@ -690,7 +732,7 @@ class UIElementDialog(wx.Dialog):
     """Dialog for creating/editing a UI element"""
     
     def __init__(self, parent, title="Add UI Element", element=None):
-        super().__init__(parent, title=title, size=(450, 450))
+        super().__init__(parent, title=title, size=(450, 500))
         
         # Default values if no element is provided
         self.element = element or [
@@ -698,7 +740,8 @@ class UIElementDialog(wx.Dialog):
             "New Element",     # name
             "button",          # element_type
             False,             # speaks_on_select
-            None               # submenu_id
+            None,              # submenu_id
+            "default"          # group (new field)
         ]
         
         # Store screenshot for element info
@@ -792,11 +835,23 @@ class UIElementDialog(wx.Dialog):
         submenu_box.Add(submenu_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=8)
         submenu_box.Add(self.submenu_ctrl, proportion=1)
         
+        # Group
+        group_box = wx.BoxSizer(wx.HORIZONTAL)
+        group_label = wx.StaticText(panel, label="Group:")
+        # Default group options
+        standard_groups = ["default", "tab-bar", "main-content", "side-panel", "footer"]
+        # Use a combobox to allow both selection from predefined options and custom input
+        self.group_ctrl = wx.ComboBox(panel, choices=standard_groups, 
+                                    value=str(self.element[5] if len(self.element) > 5 else "default"))
+        group_box.Add(group_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=8)
+        group_box.Add(self.group_ctrl, proportion=1)
+        
         # Add to properties section
         props_sizer.Add(name_box, flag=wx.EXPAND | wx.ALL, border=5)
         props_sizer.Add(type_box, flag=wx.EXPAND | wx.ALL, border=5)
         props_sizer.Add(self.speaks_ctrl, flag=wx.EXPAND | wx.ALL, border=5)
         props_sizer.Add(submenu_box, flag=wx.EXPAND | wx.ALL, border=5)
+        props_sizer.Add(group_box, flag=wx.EXPAND | wx.ALL, border=5)
         
         vbox.Add(props_sizer, flag=wx.EXPAND | wx.ALL, border=10)
         
@@ -839,68 +894,37 @@ class UIElementDialog(wx.Dialog):
             print(f"Error updating position color: {e}")
     
     def on_pick_location(self, event):
-        """Interactive location picker with live preview"""
+        """Interactive location picker with click-to-select functionality"""
         self.Iconize(True)
         
-        # Start cursor tracker
-        self.cursor_tracker.start_tracking()
+        # Stop tracker if running
+        if self.cursor_tracker.is_active:
+            self.cursor_tracker.stop_tracking()
         
         # Status text in parent's status bar if available
         try:
             parent_frame = wx.GetTopLevelParent(self.GetParent())
-            parent_frame.SetStatusText("Press Enter to select current position, Esc to cancel")
+            parent_frame.SetStatusText("Click to select element position, Esc to cancel")
         except:
             pass
-        
-        # Display small instructions label at the top of the screen
-        screen_width, screen_height = wx.DisplaySize()
-        instruction_label = wx.Frame(None, style=wx.FRAME_NO_TASKBAR | wx.STAY_ON_TOP | wx.BORDER_NONE)
-        instruction_label.SetTransparent(200)
-        instruction_label.SetBackgroundColour(wx.Colour(0, 0, 0))
-        instruction_text = wx.StaticText(instruction_label, label="Press Enter to select, Esc to cancel")
-        instruction_text.SetForegroundColour(wx.WHITE)
-        instruction_label.SetSize((300, 30))
-        instruction_label.Centre(wx.HORIZONTAL)
-        instruction_label.SetPosition((screen_width // 2 - 150, 10))
-        instruction_label.Show()
         
         # Take a screenshot for later use
         self.screenshot = pyautogui.screenshot()
         
-        # Manual keyboard monitoring to avoid threading issues
-        self.pick_timer = wx.Timer(self)
-        self.Bind(wx.EVT_TIMER, self.on_pick_timer, self.pick_timer)
-        self.pick_timer.Start(100)  # Check every 100ms
+        # Create and show the pixel picker overlay
+        picker_overlay = PixelPickerOverlay(self)
+        result = picker_overlay.ShowModal()
         
-        # Set a timeout to check if the selection is done
-        self.selection_timeout = 300  # 30 seconds in 100ms increments
-        self.selection_done = False
-        
-        # Store instruction label for cleanup
-        self.instruction_label = instruction_label
-    
-    def on_pick_timer(self, event):
-        """Timer event to check for keyboard input during picking"""
-        # Decrement timeout counter
-        self.selection_timeout -= 1
-        if self.selection_timeout <= 0 or self.selection_done:
-            self.pick_timer.Stop()
-            if not self.selection_done:
-                self.end_picking(None)
-            return
-            
-        # Check for keyboard input
-        if wx.GetKeyState(wx.WXK_RETURN) or wx.GetKeyState(wx.WXK_NUMPAD_ENTER):
-            x, y = pyautogui.position()
-            screenshot = pyautogui.screenshot()
-            pixel_color = screenshot.getpixel((x, y))
-            self.selection_done = True
-            self.pick_timer.Stop()
-            self.end_picking((x, y, pixel_color))
-        elif wx.GetKeyState(wx.WXK_ESCAPE):
-            self.selection_done = True
-            self.pick_timer.Stop()
+        # Process result
+        if result == wx.ID_OK and picker_overlay.get_result():
+            self.end_picking(picker_overlay.get_result())
+        else:
+            # User canceled
             self.end_picking(None)
+        
+        # Clean up
+        picker_overlay.cleanup()
+        picker_overlay.Destroy()
     
     def end_picking(self, result):
         """End the picking process and process results"""
@@ -942,10 +966,16 @@ class UIElementDialog(wx.Dialog):
         if not submenu_id:
             submenu_id = None
             
+        # Get the group value, defaulting to "default" if empty
+        group = self.group_ctrl.GetValue()
+        if not group:
+            group = "default"
+            
         return [
             (self.x_ctrl.GetValue(), self.y_ctrl.GetValue()),
             self.name_ctrl.GetValue(),
             self.type_ctrl.GetString(self.type_ctrl.GetSelection()),
             self.speaks_ctrl.GetValue(),
-            submenu_id
+            submenu_id,
+            group
         ]
