@@ -1,13 +1,5 @@
 """
-Enhanced UI Profile Creator - With Real-Time Cursor Tracker
-
-This tool allows users to:
-1. Create and manage menu/screen definitions with detection conditions
-2. Define UI elements within each menu/screen
-3. Save and load profile data as JSON files
-4. Use a floating cursor tracker to see real-time color and coordinates
-
-Uses wxPython for a simple, reliable interface.
+MenuAccess profile creator main script
 """
 
 import sys
