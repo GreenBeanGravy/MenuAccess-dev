@@ -728,11 +728,327 @@ class RegionColorConditionDialog(wx.Dialog):
         return self.condition
 
 
+class OCRRegionDialog(wx.Dialog):
+    """Dialog for creating/editing an OCR region"""
+    
+    def __init__(self, parent, title="Add OCR Region", ocr_region=None):
+        super().__init__(parent, title=title, size=(500, 400))
+        
+        self.ocr_region = ocr_region or {
+            "x1": 0,
+            "y1": 0,
+            "x2": 100,
+            "y2": 100,
+            "tag": "ocr1"
+        }
+        
+        # Initialize selection variables
+        self.screenshot = None
+        
+        # Get cursor tracker
+        self.cursor_tracker = get_cursor_tracker()
+        
+        self.init_ui()
+        self.Center()
+        
+    def init_ui(self):
+        panel = wx.Panel(self)
+        vbox = wx.BoxSizer(wx.VERTICAL)
+        
+        # Region coordinates group
+        coord_box = wx.StaticBox(panel, label="OCR Region Coordinates")
+        coord_sizer = wx.StaticBoxSizer(coord_box, wx.VERTICAL)
+        
+        # First row: Top-left corner
+        tl_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        tl_label = wx.StaticText(panel, label="Top-left:")
+        
+        x1_label = wx.StaticText(panel, label="X1:")
+        self.x1_ctrl = wx.SpinCtrl(panel, min=0, max=9999, value=str(self.ocr_region["x1"]))
+        
+        y1_label = wx.StaticText(panel, label="Y1:")
+        self.y1_ctrl = wx.SpinCtrl(panel, min=0, max=9999, value=str(self.ocr_region["y1"]))
+        
+        tl_sizer.Add(tl_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=8)
+        tl_sizer.Add(x1_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        tl_sizer.Add(self.x1_ctrl, proportion=1, flag=wx.RIGHT, border=10)
+        tl_sizer.Add(y1_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        tl_sizer.Add(self.y1_ctrl, proportion=1)
+        
+        # Second row: Bottom-right corner
+        br_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        br_label = wx.StaticText(panel, label="Bottom-right:")
+        
+        x2_label = wx.StaticText(panel, label="X2:")
+        self.x2_ctrl = wx.SpinCtrl(panel, min=0, max=9999, value=str(self.ocr_region["x2"]))
+        
+        y2_label = wx.StaticText(panel, label="Y2:")
+        self.y2_ctrl = wx.SpinCtrl(panel, min=0, max=9999, value=str(self.ocr_region["y2"]))
+        
+        br_sizer.Add(br_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=8)
+        br_sizer.Add(x2_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        br_sizer.Add(self.x2_ctrl, proportion=1, flag=wx.RIGHT, border=10)
+        br_sizer.Add(y2_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        br_sizer.Add(self.y2_ctrl, proportion=1)
+        
+        # Select region button
+        self.region_btn = wx.Button(panel, label="Select Region on Screen")
+        self.region_btn.Bind(wx.EVT_BUTTON, self.on_select_region)
+        
+        # Tag field
+        tag_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        tag_label = wx.StaticText(panel, label="OCR Tag:")
+        self.tag_ctrl = wx.TextCtrl(panel, value=str(self.ocr_region["tag"]))
+        tag_help = wx.StaticText(panel, label="(used as {tag} in announcement)")
+        
+        tag_sizer.Add(tag_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=8)
+        tag_sizer.Add(self.tag_ctrl, proportion=1, flag=wx.RIGHT, border=8)
+        tag_sizer.Add(tag_help, flag=wx.ALIGN_CENTER_VERTICAL)
+        
+        # Add to coordinate sizer
+        coord_sizer.Add(tl_sizer, flag=wx.EXPAND | wx.ALL, border=5)
+        coord_sizer.Add(br_sizer, flag=wx.EXPAND | wx.ALL, border=5)
+        coord_sizer.Add(tag_sizer, flag=wx.EXPAND | wx.ALL, border=5)
+        coord_sizer.Add(self.region_btn, flag=wx.EXPAND | wx.ALL, border=5)
+        
+        # Add to main sizer
+        vbox.Add(coord_sizer, flag=wx.EXPAND | wx.ALL, border=10)
+        
+        # Preview section (shows selected region)
+        preview_box = wx.StaticBox(panel, label="Preview")
+        preview_sizer = wx.StaticBoxSizer(preview_box, wx.VERTICAL)
+        
+        self.preview_text = wx.StaticText(panel, label="Select a region to see dimensions")
+        preview_sizer.Add(self.preview_text, flag=wx.EXPAND | wx.ALL, border=5)
+        
+        # Add to main sizer
+        vbox.Add(preview_sizer, flag=wx.EXPAND | wx.ALL, border=10)
+        
+        # Buttons
+        button_box = wx.BoxSizer(wx.HORIZONTAL)
+        ok_button = wx.Button(panel, wx.ID_OK, "OK")
+        cancel_button = wx.Button(panel, wx.ID_CANCEL, "Cancel")
+        button_box.Add(ok_button)
+        button_box.Add(cancel_button, flag=wx.LEFT, border=5)
+        vbox.Add(button_box, flag=wx.ALIGN_RIGHT | wx.ALL, border=10)
+        
+        panel.SetSizer(vbox)
+        
+        # Bind close event
+        self.Bind(wx.EVT_CLOSE, self.on_close)
+        
+    def on_close(self, event):
+        """Ensure tracker is stopped when dialog closes"""
+        if self.cursor_tracker.is_active:
+            self.cursor_tracker.stop_tracking()
+        event.Skip()
+    
+    def on_select_region(self, event):
+        """Start the interactive region selection process"""
+        self.Iconize(True)
+        
+        # Start cursor tracker
+        self.cursor_tracker.start_tracking()
+        
+        # Status text in parent's status bar if available
+        try:
+            parent_frame = wx.GetTopLevelParent(self.GetParent())
+            parent_frame.SetStatusText("Click and drag to select a region. Press ESC to cancel")
+        except:
+            pass
+        
+        # Use wx.CallAfter to ensure we're in the main thread
+        wx.CallAfter(self._do_select_region)
+    
+    def _do_select_region(self):
+        """Perform the interactive region selection"""
+        # Create a selection overlay dialog
+        overlay = wx.Dialog(None, title="OCR Region Selector", 
+                          style=wx.STAY_ON_TOP | wx.FRAME_NO_TASKBAR | wx.NO_BORDER)
+        
+        # Make it full screen and transparent
+        overlay.SetTransparent(150)  # Semi-transparent
+        overlay.ShowFullScreen(True)
+        
+        # Take a full screenshot for reference
+        self.screenshot = pyautogui.screenshot()
+        screen_width, screen_height = self.screenshot.size
+        
+        # Create a panel to capture mouse events
+        panel = wx.Panel(overlay)
+        panel.SetSize(screen_width, screen_height)
+        
+        # State variables for the selection
+        selection_start = None
+        is_selecting = False
+        
+        # Create a buffered DC for drawing
+        buffer = wx.Bitmap(screen_width, screen_height)
+        
+        def draw_selection():
+            """Draw the current selection on the overlay"""
+            nonlocal buffer
+            
+            dc = wx.BufferedDC(wx.ClientDC(panel), buffer)
+            dc.Clear()
+            
+            if selection_start and is_selecting:
+                x1, y1 = selection_start
+                x2, y2 = panel.ScreenToClient(wx.GetMousePosition())
+                
+                # Draw rectangle
+                dc.SetPen(wx.Pen(wx.GREEN, 2))
+                dc.SetBrush(wx.Brush(wx.Colour(0, 255, 0, 64)))  # Semi-transparent green
+                
+                # Calculate rectangle coordinates
+                left = min(x1, x2)
+                top = min(y1, y2)
+                width = abs(x2 - x1)
+                height = abs(y2 - y1)
+                
+                dc.DrawRectangle(left, top, width, height)
+                
+                # Draw dimensions text
+                text = f"{width}x{height} px"
+                dc.SetTextForeground(wx.WHITE)
+                dc.DrawText(text, left + 5, top + 5)
+        
+        def on_paint(evt):
+            """Handle paint events"""
+            wx.BufferedPaintDC(panel, buffer)
+        
+        def on_mouse_down(evt):
+            """Handle mouse down events"""
+            nonlocal selection_start, is_selecting
+            selection_start = evt.GetPosition()
+            is_selecting = True
+            draw_selection()
+        
+        def on_mouse_move(evt):
+            """Handle mouse move events"""
+            if is_selecting:
+                draw_selection()
+        
+        def on_mouse_up(evt):
+            """Handle mouse up events"""
+            nonlocal is_selecting
+            
+            if not is_selecting:
+                return
+                
+            is_selecting = False
+            
+            # Get the selection
+            x1, y1 = selection_start
+            x2, y2 = evt.GetPosition()
+            
+            # Ensure x1,y1 is top-left and x2,y2 is bottom-right
+            if x1 > x2:
+                x1, x2 = x2, x1
+            if y1 > y2:
+                y1, y2 = y2, y1
+            
+            # Close the overlay
+            overlay.Close()
+            
+            # Process the selection
+            self.process_selection(x1, y1, x2, y2)
+        
+        def on_key_down(evt):
+            """Handle key down events"""
+            if evt.GetKeyCode() == wx.WXK_ESCAPE:
+                overlay.Close()
+                self.on_selection_canceled()
+        
+        # Bind events
+        panel.Bind(wx.EVT_PAINT, on_paint)
+        panel.Bind(wx.EVT_LEFT_DOWN, on_mouse_down)
+        panel.Bind(wx.EVT_MOTION, on_mouse_move)
+        panel.Bind(wx.EVT_LEFT_UP, on_mouse_up)
+        panel.Bind(wx.EVT_KEY_DOWN, on_key_down)
+        
+        # Initialize the buffer
+        dc = wx.BufferedDC(None, buffer)
+        dc.Clear()
+        
+        # Show instructions
+        info_text = "Click and drag to select an OCR region. Press ESC to cancel."
+        font = wx.Font(14, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
+        dc.SetFont(font)
+        dc.SetTextForeground(wx.WHITE)
+        text_width, text_height = dc.GetTextExtent(info_text)
+        dc.DrawText(info_text, (screen_width - text_width) // 2, 30)
+        
+        # Show the overlay (this blocks until the overlay is closed)
+        overlay.ShowModal()
+    
+    def on_selection_canceled(self):
+        """Handle cancellation of region selection"""
+        # Stop the cursor tracker
+        self.cursor_tracker.stop_tracking()
+        
+        # Restore main window
+        self.Iconize(False)
+        self.Raise()
+        
+        # Reset status text
+        try:
+            parent_frame = wx.GetTopLevelParent(self.GetParent())
+            parent_frame.SetStatusText("")
+        except:
+            pass
+    
+    def process_selection(self, x1, y1, x2, y2):
+        """Process the selected region"""
+        # Update controls
+        self.x1_ctrl.SetValue(x1)
+        self.y1_ctrl.SetValue(y1)
+        self.x2_ctrl.SetValue(x2)
+        self.y2_ctrl.SetValue(y2)
+        
+        # Extract region info
+        try:
+            # Crop the region from our screenshot
+            region = self.screenshot.crop((x1, y1, x2, y2))
+            
+            # Update preview text
+            region_size = region.size
+            self.preview_text.SetLabel(f"OCR Region: {region_size[0]}x{region_size[1]} pixels")
+            
+        except Exception as e:
+            self.preview_text.SetLabel(f"Error analyzing region: {str(e)}")
+        
+        # Stop the cursor tracker
+        self.cursor_tracker.stop_tracking()
+        
+        # Restore main window
+        self.Iconize(False)
+        self.Raise()
+        
+        # Reset status text
+        try:
+            parent_frame = wx.GetTopLevelParent(self.GetParent())
+            parent_frame.SetStatusText("")
+        except:
+            pass
+    
+    def get_ocr_region(self):
+        """Get the OCR region data from the dialog"""
+        self.ocr_region.update({
+            "x1": self.x1_ctrl.GetValue(),
+            "y1": self.y1_ctrl.GetValue(),
+            "x2": self.x2_ctrl.GetValue(),
+            "y2": self.y2_ctrl.GetValue(),
+            "tag": self.tag_ctrl.GetValue() or "ocr1"
+        })
+        return self.ocr_region
+
+
 class UIElementDialog(wx.Dialog):
     """Dialog for creating/editing a UI element"""
     
     def __init__(self, parent, title="Add UI Element", element=None):
-        super().__init__(parent, title=title, size=(450, 500))
+        super().__init__(parent, title=title, size=(550, 650))
         
         # Default values if no element is provided
         self.element = element or [
@@ -741,8 +1057,19 @@ class UIElementDialog(wx.Dialog):
             "button",          # element_type
             False,             # speaks_on_select
             None,              # submenu_id
-            "default"          # group (new field)
+            "default",         # group
+            [],                # ocr_regions
+            None               # custom_announcement
         ]
+        
+        # Ensure the element has all fields
+        while len(self.element) < 8:
+            if len(self.element) == 6:  # Add OCR regions
+                self.element.append([])
+            elif len(self.element) == 7:  # Add custom announcement
+                self.element.append(None)
+            else:  # Add any missing fields (for backward compatibility)
+                self.element.append(None)
         
         # Store screenshot for element info
         self.screenshot = None
@@ -855,6 +1182,69 @@ class UIElementDialog(wx.Dialog):
         
         vbox.Add(props_sizer, flag=wx.EXPAND | wx.ALL, border=10)
         
+        # OCR Regions section
+        ocr_box = wx.StaticBox(panel, label="OCR Regions")
+        ocr_sizer = wx.StaticBoxSizer(ocr_box, wx.VERTICAL)
+        
+        # OCR Regions list
+        self.ocr_list = wx.ListCtrl(panel, style=wx.LC_REPORT, size=(-1, 100))
+        self.ocr_list.InsertColumn(0, "Tag", width=60)
+        self.ocr_list.InsertColumn(1, "Region", width=200)
+        
+        # Populate OCR regions list
+        self.update_ocr_list()
+        
+        # OCR button sizer
+        ocr_btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        
+        # Add OCR region button
+        add_ocr_btn = wx.Button(panel, label="Add OCR Region")
+        add_ocr_btn.Bind(wx.EVT_BUTTON, self.on_add_ocr_region)
+        ocr_btn_sizer.Add(add_ocr_btn, flag=wx.RIGHT, border=5)
+        
+        # Edit OCR region button
+        edit_ocr_btn = wx.Button(panel, label="Edit OCR Region")
+        edit_ocr_btn.Bind(wx.EVT_BUTTON, self.on_edit_ocr_region)
+        ocr_btn_sizer.Add(edit_ocr_btn, flag=wx.RIGHT, border=5)
+        
+        # Delete OCR region button
+        del_ocr_btn = wx.Button(panel, label="Delete OCR Region")
+        del_ocr_btn.Bind(wx.EVT_BUTTON, self.on_delete_ocr_region)
+        ocr_btn_sizer.Add(del_ocr_btn)
+        
+        # Add to OCR section
+        ocr_sizer.Add(self.ocr_list, flag=wx.EXPAND | wx.ALL, border=5)
+        ocr_sizer.Add(ocr_btn_sizer, flag=wx.EXPAND | wx.ALL, border=5)
+        
+        vbox.Add(ocr_sizer, flag=wx.EXPAND | wx.ALL, border=10)
+        
+        # Custom Announcement section
+        announce_box = wx.StaticBox(panel, label="Custom Announcement")
+        announce_sizer = wx.StaticBoxSizer(announce_box, wx.VERTICAL)
+        
+        # Enable custom announcement checkbox
+        self.custom_announce_cb = wx.CheckBox(panel, label="Use custom announcement format")
+        self.custom_announce_cb.SetValue(self.element[7] is not None)
+        self.custom_announce_cb.Bind(wx.EVT_CHECKBOX, self.on_custom_announce_toggled)
+        
+        # Custom announcement template field
+        template_label = wx.StaticText(panel, label="Format Template:")
+        self.template_ctrl = wx.TextCtrl(panel, 
+                                      value=str(self.element[7] or "{name}, {type}, {index}"),
+                                      size=(-1, 60), style=wx.TE_MULTILINE)
+        self.template_ctrl.Enable(self.element[7] is not None)
+        
+        # Help text
+        help_text = wx.StaticText(panel, label="Available tags: {name}, {type}, {index}, {menu}, {ocr_tag}, ... ")
+        
+        # Add to announcement section
+        announce_sizer.Add(self.custom_announce_cb, flag=wx.EXPAND | wx.ALL, border=5)
+        announce_sizer.Add(template_label, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, border=5)
+        announce_sizer.Add(self.template_ctrl, flag=wx.EXPAND | wx.LEFT | wx.RIGHT, border=5)
+        announce_sizer.Add(help_text, flag=wx.EXPAND | wx.ALL, border=5)
+        
+        vbox.Add(announce_sizer, flag=wx.EXPAND | wx.ALL, border=10)
+        
         # Buttons
         button_box = wx.BoxSizer(wx.HORIZONTAL)
         ok_button = wx.Button(panel, wx.ID_OK, "OK")
@@ -892,6 +1282,108 @@ class UIElementDialog(wx.Dialog):
                 self.color_display.SetColor(pixel_color)
         except Exception as e:
             print(f"Error updating position color: {e}")
+    
+    def on_custom_announce_toggled(self, event):
+        """Handle toggling the custom announcement checkbox"""
+        is_enabled = event.IsChecked()
+        self.template_ctrl.Enable(is_enabled)
+        
+        # Set default template if enabling
+        if is_enabled and not self.template_ctrl.GetValue():
+            self.template_ctrl.SetValue("{name}, {type}, {index}")
+    
+    def update_ocr_list(self):
+        """Update the OCR regions list"""
+        self.ocr_list.DeleteAllItems()
+        
+        ocr_regions = self.element[6] if len(self.element) > 6 else []
+        
+        for i, region in enumerate(ocr_regions):
+            tag = region.get("tag", f"ocr{i+1}")
+            region_text = f"({region.get('x1', 0)}, {region.get('y1', 0)}) to ({region.get('x2', 0)}, {region.get('y2', 0)})"
+            
+            idx = self.ocr_list.InsertItem(i, tag)
+            self.ocr_list.SetItem(idx, 1, region_text)
+    
+    def on_add_ocr_region(self, event):
+        """Add a new OCR region"""
+        # Create OCR tag based on existing regions
+        ocr_regions = self.element[6] if len(self.element) > 6 else []
+        existing_tags = set(region.get("tag", f"ocr{i+1}") for i, region in enumerate(ocr_regions))
+        
+        # Find a unique tag
+        new_tag = "ocr1"
+        counter = 1
+        while new_tag in existing_tags:
+            counter += 1
+            new_tag = f"ocr{counter}"
+        
+        # Create dialog for OCR region
+        dialog = OCRRegionDialog(self, title="Add OCR Region", 
+                               ocr_region={"x1": 0, "y1": 0, "x2": 100, "y2": 100, "tag": new_tag})
+        
+        if dialog.ShowModal() == wx.ID_OK:
+            # Get region data
+            ocr_region = dialog.get_ocr_region()
+            
+            # Add to element
+            if len(self.element) <= 6:
+                self.element.append([])
+            
+            self.element[6].append(ocr_region)
+            
+            # Update list
+            self.update_ocr_list()
+        
+        dialog.Destroy()
+    
+    def on_edit_ocr_region(self, event):
+        """Edit the selected OCR region"""
+        selected = self.ocr_list.GetFirstSelected()
+        if selected == -1:
+            wx.MessageBox("Please select an OCR region to edit", "No Selection", wx.ICON_INFORMATION)
+            return
+        
+        ocr_regions = self.element[6] if len(self.element) > 6 else []
+        if selected >= len(ocr_regions):
+            return
+        
+        # Create dialog for OCR region
+        dialog = OCRRegionDialog(self, title="Edit OCR Region", ocr_region=ocr_regions[selected])
+        
+        if dialog.ShowModal() == wx.ID_OK:
+            # Get updated region data
+            updated_region = dialog.get_ocr_region()
+            
+            # Update element
+            ocr_regions[selected] = updated_region
+            
+            # Update list
+            self.update_ocr_list()
+        
+        dialog.Destroy()
+    
+    def on_delete_ocr_region(self, event):
+        """Delete the selected OCR region"""
+        selected = self.ocr_list.GetFirstSelected()
+        if selected == -1:
+            wx.MessageBox("Please select an OCR region to delete", "No Selection", wx.ICON_INFORMATION)
+            return
+        
+        ocr_regions = self.element[6] if len(self.element) > 6 else []
+        if selected >= len(ocr_regions):
+            return
+        
+        # Confirm deletion
+        if wx.MessageBox("Are you sure you want to delete this OCR region?", 
+                       "Confirm Deletion", wx.YES_NO | wx.ICON_QUESTION) != wx.YES:
+            return
+        
+        # Delete the region
+        del ocr_regions[selected]
+        
+        # Update list
+        self.update_ocr_list()
     
     def on_pick_location(self, event):
         """Interactive location picker with click-to-select functionality"""
@@ -971,11 +1463,21 @@ class UIElementDialog(wx.Dialog):
         if not group:
             group = "default"
             
+        # Get OCR regions
+        ocr_regions = self.element[6] if len(self.element) > 6 else []
+        
+        # Get custom announcement template
+        announcement = None
+        if self.custom_announce_cb.GetValue():
+            announcement = self.template_ctrl.GetValue()
+            
         return [
             (self.x_ctrl.GetValue(), self.y_ctrl.GetValue()),
             self.name_ctrl.GetValue(),
             self.type_ctrl.GetString(self.type_ctrl.GetSelection()),
             self.speaks_ctrl.GetValue(),
             submenu_id,
-            group
+            group,
+            ocr_regions,
+            announcement
         ]

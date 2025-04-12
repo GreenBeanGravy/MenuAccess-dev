@@ -18,6 +18,7 @@ import argparse
 from PIL import Image
 import mss
 from functools import lru_cache
+import easyocr  # Using EasyOCR instead of pytesseract
 
 # Setup logging with faster string formatting
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -280,6 +281,7 @@ class MenuConditionChecker:
         # No change detected, keep previous menu
         return self.last_active_menu
 
+
 class AccessibleMenuNavigator:
     """Main class for menu navigation with high-performance optimizations"""
     
@@ -296,6 +298,13 @@ class AccessibleMenuNavigator:
         self.current_group = "default"
         self.group_positions = {}  # Stores the position within each group
         self.menu_groups = {}     # Stores the groups for each menu
+        
+        # OCR setup
+        self.reader = None  # Will be initialized when needed
+        
+        # OCR cache to avoid repeated recognition of the same region
+        self.ocr_cache = {}
+        self.ocr_cache_ttl = 10.0  # OCR cache valid for 10 seconds
         
         # Performance optimizations
         self.condition_checker = MenuConditionChecker()
@@ -345,7 +354,20 @@ class AccessibleMenuNavigator:
             try:
                 # Get message with timeout to allow checking stop_requested
                 message = self.speech_queue.get(timeout=0.1)
-                self.speaker.speak(message)
+                
+                try:
+                    self.speaker.speak(message)
+                except Exception as speech_error:
+                    # Log the error but continue operation
+                    self.log(f"Speech error: {speech_error}", logging.ERROR)
+                    
+                    # Try to reinitialize the speech engine
+                    try:
+                        self.speaker = ao.Auto()
+                        self.log("Reinitialized speech engine", logging.INFO)
+                    except:
+                        self.log("Failed to reinitialize speech engine", logging.ERROR)
+                
                 self.speech_queue.task_done()
             except queue.Empty:
                 pass
@@ -356,10 +378,24 @@ class AccessibleMenuNavigator:
             return
         logger.log(level, message)
     
-    def start(self, profile_path):
+    def init_ocr_reader(self, languages=None):
+        """Initialize the EasyOCR reader with specified languages"""
+        if self.reader is None:
+            # Default to English if no languages specified
+            if not languages:
+                languages = ['en']
+                
+            self.log(f"Initializing EasyOCR reader with languages: {languages}")
+            self.reader = easyocr.Reader(languages)
+            self.log("EasyOCR reader initialized")
+    
+    def start(self, profile_path, languages=None):
         """Start the navigator with optimized threading"""
         self.log("Accessible Menu Navigation Active")
         self.speak("Accessible Menu Navigation started")
+        
+        # Initialize OCR reader in the background
+        threading.Thread(target=self.init_ocr_reader, args=(languages,), daemon=True).start()
         
         self.last_menu_check = time.time()
         
@@ -532,9 +568,9 @@ class AccessibleMenuNavigator:
                     self.log(f"Detected new active menu: {active_menu}")
                     
                     old_menu = self.menu_stack[0] if self.menu_stack else None
-                    should_reset_index = True
                     
                     # Check if we should reset the index when entering this menu
+                    should_reset_index = True
                     if active_menu in self.menus:
                         # Get reset_index property (default True for backwards compatibility)
                         should_reset_index = self.menus[active_menu].get("reset_index", True)
@@ -563,17 +599,20 @@ class AccessibleMenuNavigator:
                     
                     # Reset position only if needed, otherwise maintain existing position
                     if should_reset_index:
-                        # Reset to the start of the appropriate group
-                        self.current_position = 0
-                        self.current_group = reset_group
+                        # Find a valid group to use (starting with the specified reset_group)
+                        valid_group = self.find_valid_group(active_menu, reset_group)
+                        self.current_group = valid_group
                         self.log(f"Resetting index for menu: {active_menu} (was at position {old_pos})")
                         
-                        # If we're resetting to a specific group, navigate to it
-                        if reset_group != "default":
-                            group_items = self.get_group_items(active_menu, reset_group)
-                            if group_items:
-                                self.current_position = group_items[0]
-                                self.log(f"Resetting to group '{reset_group}' at position {self.current_position}")
+                        # Navigate to the first item in the valid group
+                        group_items = self.get_group_items(active_menu, valid_group)
+                        if group_items:
+                            self.current_position = group_items[0]
+                            self.log(f"Resetting to group '{valid_group}' at position {self.current_position}")
+                        else:
+                            # If somehow still no items, set to position 0
+                            self.current_position = 0
+                            self.log(f"No items in any group, defaulting to position 0")
                     else:
                         # Keep the same group if it exists in the new menu
                         if old_menu:
@@ -601,9 +640,17 @@ class AccessibleMenuNavigator:
                             self.current_position = current_pos
                             self.log(f"Maintaining index {current_pos} for menu: {active_menu} (reset_index is {should_reset_index})")
                         else:
-                            # Fall back to position 0
-                            self.current_position = 0
-                            self.log(f"Index out of range, resetting to 0 for menu: {active_menu} (tried to use {current_pos})")
+                            # Find a valid group
+                            valid_group = self.find_valid_group(active_menu)
+                            self.current_group = valid_group
+                            
+                            # Get the first item in the valid group
+                            group_items = self.get_group_items(active_menu, valid_group)
+                            if group_items:
+                                self.current_position = group_items[0]
+                            else:
+                                # If somehow still no items, set to position 0
+                                self.current_position = 0
                     
                     # Announce menu change but in a more streamlined way
                     menu_name = active_menu.replace('-', ' ')
@@ -621,6 +668,29 @@ class AccessibleMenuNavigator:
             except Exception as e:
                 self.log(f"Menu detection error: {e}", logging.ERROR)
                 time.sleep(0.1)  # Longer pause on error
+    
+    def find_valid_group(self, menu_id, preferred_group="default"):
+        """Find a group that contains at least one element, preferring the specified group"""
+        if menu_id not in self.menus:
+            return "default"
+            
+        # Get all groups in this menu
+        all_groups = self.get_menu_groups(menu_id)
+        
+        # First try the preferred group
+        if preferred_group in all_groups:
+            items = self.get_group_items(menu_id, preferred_group)
+            if items:
+                return preferred_group
+                
+        # If preferred group is empty or not found, try each group in order
+        for group in all_groups:
+            items = self.get_group_items(menu_id, group)
+            if items:
+                return group
+                
+        # If no group has items, return the preferred one anyway
+        return preferred_group
     
     def _set_cursor_position(self, x, y):
         """Ultra-fast cursor positioning using ctypes"""
@@ -647,6 +717,90 @@ class AccessibleMenuNavigator:
             'position': position
         })
     
+    def perform_ocr(self, x1, y1, x2, y2):
+        """Perform OCR on a screen region using EasyOCR"""
+        try:
+            # Check cache first
+            cache_key = (x1, y1, x2, y2)
+            current_time = time.time()
+            
+            # If we have a valid cached result, use it
+            if cache_key in self.ocr_cache and current_time - self.ocr_cache[cache_key]['time'] < self.ocr_cache_ttl:
+                self.log(f"Using cached OCR result for region ({x1},{y1},{x2},{y2})", logging.DEBUG)
+                return self.ocr_cache[cache_key]['text']
+            
+            # Initialize reader if needed
+            if self.reader is None:
+                self.init_ocr_reader()
+                
+            # Take a screenshot
+            with mss.mss() as sct:
+                region = {"top": y1, "left": x1, "width": x2-x1, "height": y2-y1}
+                screenshot = sct.grab(region)
+                img = Image.frombytes("RGB", (screenshot.width, screenshot.height), screenshot.rgb)
+            
+            # Convert to numpy array for EasyOCR
+            img_np = np.array(img)
+            
+            # Perform OCR with EasyOCR
+            result = self.reader.readtext(img_np)
+            
+            # Extract all detected text and join
+            if result:
+                # EasyOCR returns a list of [bbox, text, confidence]
+                # Join all detected text pieces
+                ocr_text = ' '.join([entry[1] for entry in result])
+            else:
+                ocr_text = ""
+            
+            # Cache the result
+            self.ocr_cache[cache_key] = {
+                'text': ocr_text,
+                'time': current_time
+            }
+            
+            self.log(f"OCR result for region ({x1},{y1},{x2},{y2}): '{ocr_text}'", logging.DEBUG)
+            return ocr_text
+            
+        except Exception as e:
+            self.log(f"OCR error: {e}", logging.ERROR)
+            return ""
+    
+    def process_ocr_regions(self, menu_id, element_index):
+        """Process all OCR regions for a UI element"""
+        if not self.menu_stack:
+            return {}
+            
+        if menu_id not in self.menus:
+            return {}
+            
+        items = self.menus[menu_id].get("items", [])
+        if element_index >= len(items):
+            return {}
+            
+        element = items[element_index]
+        
+        # Check if element has OCR regions
+        if len(element) <= 6 or not element[6]:
+            return {}
+            
+        ocr_regions = element[6]
+        results = {}
+        
+        # Process each OCR region
+        for region in ocr_regions:
+            tag = region.get("tag", "ocr1")
+            x1 = region.get("x1", 0)
+            y1 = region.get("y1", 0)
+            x2 = region.get("x2", 0)
+            y2 = region.get("y2", 0)
+            
+            # Perform OCR
+            text = self.perform_ocr(x1, y1, x2, y2)
+            results[tag] = text
+        
+        return results
+    
     def _perform_navigation(self, direction):
         """Perform navigation in the given direction"""
         if not self.menu_stack:
@@ -660,27 +814,38 @@ class AccessibleMenuNavigator:
         
         if not group_items:
             self.log(f"No items in group '{self.current_group}' for menu '{current_menu}'", logging.WARNING)
-            # Try to fall back to default group if needed
-            if self.current_group != "default":
-                self.log(f"Falling back to 'default' group", logging.INFO)
-                self.current_group = "default"
-                group_items = self.get_group_items(current_menu, "default")
+            
+            # Find a valid group
+            valid_group = self.find_valid_group(current_menu, self.current_group)
+            
+            # If we found a different group with items, switch to it
+            if valid_group != self.current_group:
+                self.log(f"Switching to group '{valid_group}' which has items", logging.INFO)
+                self.current_group = valid_group
+                group_items = self.get_group_items(current_menu, valid_group)
                 
-                # If still no items, try using all items
-                if not group_items:
-                    self.log(f"No items in 'default' group, getting all items", logging.INFO)
-                    all_items = self.get_current_menu_items()
-                    if all_items:
-                        self.current_position = max(0, min(self.current_position, len(all_items)-1))
-                        details = self.get_item_details(current_menu, self.current_position)
-                        if details:
-                            self.enqueue_mouse_move(details['coordinates'])
-                            self.announce_item(details)
-                            return
+                if group_items:
+                    self.current_position = group_items[0]
+                    details = self.get_item_details(current_menu, self.current_position)
+                    if details:
+                        self.enqueue_mouse_move(details['coordinates'])
+                        self.announce_item(details)
+                        return
             
-            self.speak(f"No items available in this menu")
+            # If we still have no items, check if there are any items at all
+            all_items = self.get_current_menu_items()
+            if not all_items:
+                self.speak(f"No items available in this menu")
+                return
+                
+            # If there are items but none in any group, use the first item
+            self.current_position = 0
+            details = self.get_item_details(current_menu, self.current_position)
+            if details:
+                self.enqueue_mouse_move(details['coordinates'])
+                self.announce_item(details)
             return
-            
+        
         # Find the current item's position within the group
         try:
             group_index = group_items.index(self.current_position)
@@ -799,6 +964,12 @@ class AccessibleMenuNavigator:
         has_submenu = item[4] is not None
         submenu_indicator = "submenu" if has_submenu else ""
         
+        # Check for OCR regions
+        has_ocr = len(item) > 6 and item[6]
+        
+        # Check for custom announcement format
+        custom_announcement = item[7] if len(item) > 7 else None
+        
         return {
             'coordinates': item[0],
             'name': item[1],
@@ -807,17 +978,56 @@ class AccessibleMenuNavigator:
             'submenu': item[4],
             'index_message': f"{position + 1} of {len(items)}",
             'has_submenu': has_submenu,
-            'submenu_indicator': submenu_indicator
+            'submenu_indicator': submenu_indicator,
+            'group': item[5] if len(item) > 5 else "default",
+            'has_ocr': has_ocr,
+            'custom_announcement': custom_announcement
         }
     
+    def format_announcement(self, details, ocr_results={}):
+        """Format an announcement message using the template or defaults"""
+        # If no custom template, use default format
+        if not details.get('custom_announcement'):
+            # Default format: "{name}, {type}, {index}"
+            return f"{details['name']}, {details['type']}, {details['index_message']}"
+        
+        # Use custom template with replacements
+        template = details['custom_announcement']
+        
+        # Prepare replacements
+        replacements = {
+            'name': details['name'],
+            'type': details['type'],
+            'index': details['index_message'],
+            'menu': self.menu_stack[-1].replace('-', ' ') if self.menu_stack else "no menu",
+            'submenu': "submenu" if details['has_submenu'] else "",
+            'group': details['group']
+        }
+        
+        # Add OCR results to replacements
+        for tag, text in ocr_results.items():
+            replacements[tag] = text
+        
+        # Perform replacements
+        result = template
+        for key, value in replacements.items():
+            result = result.replace(f"{{{key}}}", str(value))
+        
+        return result
+    
     def announce_item(self, details):
-        """Announce an item with simplified formatting"""
+        """Announce an item with enhanced formatting"""
         if not details:
             self.speak("No item selected")
             return
-            
-        # Format message - simplified with no submenu indicator
-        message = f"{details['name']}, {details['type']}, {details['index_message']}"
+        
+        # Process OCR regions if present
+        ocr_results = {}
+        if details.get('has_ocr'):
+            ocr_results = self.process_ocr_regions(self.menu_stack[-1], self.current_position)
+        
+        # Format the announcement
+        message = self.format_announcement(details, ocr_results)
         
         self.speak(message)
     
@@ -906,9 +1116,41 @@ class AccessibleMenuNavigator:
         items = self.get_group_items(menu_id, group)
         
         if not items:
-            self.log(f"No items found in group '{group}' for menu '{menu_id}'", logging.WARNING)
-            return False
+            # Look for a different group that has items
+            self.log(f"No items found in group '{group}' for menu '{menu_id}', looking for alternative", logging.WARNING)
             
+            all_groups = self.get_menu_groups(menu_id)
+            alternative_group = None
+            
+            # Try to find any group with items
+            for g in all_groups:
+                if g != group:  # Skip the original group
+                    group_items = self.get_group_items(menu_id, g)
+                    if group_items:
+                        alternative_group = g
+                        break
+            
+            if alternative_group:
+                self.log(f"Found alternative group '{alternative_group}' with items", logging.INFO)
+                group = alternative_group
+                items = self.get_group_items(menu_id, group)
+            else:
+                self.log(f"No groups with items found in menu '{menu_id}'", logging.WARNING)
+                # Check if there are any items at all
+                all_items = self.get_current_menu_items()
+                if not all_items:
+                    self.speak(f"No items available in this menu")
+                    return False
+                
+                # If there are items but none in any group, use position 0
+                self.current_position = 0
+                details = self.get_item_details(menu_id, 0)
+                if details:
+                    self.enqueue_mouse_move(details['coordinates'])
+                    if announce:
+                        self.announce_item(details)
+                return True
+        
         # Save current position in current group
         if self.current_group:
             self.group_positions[self.current_group] = self.current_position
@@ -957,40 +1199,88 @@ class AccessibleMenuNavigator:
         return group_indices
     
     def navigate_to_next_group(self):
-        """Navigate to the next group"""
+        """Navigate to the next group with items"""
         if not self.menu_stack:
             self.speak("No menu selected")
             return
             
         menu_id = self.menu_stack[-1]
-        next_group = self.get_next_group(self.current_group, menu_id)
         
-        if next_group == self.current_group:
-            self.speak(f"Only one group available: {next_group}")
+        # Get all groups
+        all_groups = self.get_menu_groups(menu_id)
+        if not all_groups:
+            self.speak("No groups available")
             return
             
-        if self.navigate_to_group(next_group):
-            self.speak(f"Group: {next_group}")
-        else:
-            self.speak(f"Failed to navigate to group: {next_group}")
+        # If current group isn't in the list, use the first one
+        if self.current_group not in all_groups:
+            self.current_group = all_groups[0]
+            
+        # Start from the next group
+        idx = all_groups.index(self.current_group)
+        
+        # Try each group until we find one with items
+        for i in range(len(all_groups)):
+            # Get next group with wrapping
+            next_idx = (idx + i + 1) % len(all_groups)
+            next_group = all_groups[next_idx]
+            
+            # Skip if it's the current group
+            if next_group == self.current_group:
+                continue
+                
+            # Check if this group has items
+            items = self.get_group_items(menu_id, next_group)
+            if items:
+                # Found a group with items
+                if self.navigate_to_group(next_group):
+                    self.speak(f"Group: {next_group}")
+                    return
+        
+        # If we get here, no other group has items
+        self.speak(f"No other groups with items available")
     
     def navigate_to_prev_group(self):
-        """Navigate to the previous group"""
+        """Navigate to the previous group with items"""
         if not self.menu_stack:
             self.speak("No menu selected")
             return
             
         menu_id = self.menu_stack[-1]
-        prev_group = self.get_prev_group(self.current_group, menu_id)
         
-        if prev_group == self.current_group:
-            self.speak(f"Only one group available: {prev_group}")
+        # Get all groups
+        all_groups = self.get_menu_groups(menu_id)
+        if not all_groups:
+            self.speak("No groups available")
             return
             
-        if self.navigate_to_group(prev_group):
-            self.speak(f"Group: {prev_group}")
-        else:
-            self.speak(f"Failed to navigate to group: {prev_group}")
+        # If current group isn't in the list, use the first one
+        if self.current_group not in all_groups:
+            self.current_group = all_groups[0]
+            
+        # Start from the previous group
+        idx = all_groups.index(self.current_group)
+        
+        # Try each group until we find one with items
+        for i in range(len(all_groups)):
+            # Get previous group with wrapping
+            prev_idx = (idx - i - 1) % len(all_groups)
+            prev_group = all_groups[prev_idx]
+            
+            # Skip if it's the current group
+            if prev_group == self.current_group:
+                continue
+                
+            # Check if this group has items
+            items = self.get_group_items(menu_id, prev_group)
+            if items:
+                # Found a group with items
+                if self.navigate_to_group(prev_group):
+                    self.speak(f"Group: {prev_group}")
+                    return
+        
+        # If we get here, no other group has items
+        self.speak(f"No other groups with items available")
     
     def check_for_menu_change(self):
         """Check for menu changes - now mostly handled by background thread"""
@@ -1007,7 +1297,21 @@ class AccessibleMenuNavigator:
             if active_menu and (not self.menu_stack or active_menu != self.menu_stack[0]):
                 self.log(f"Force detected new menu: {active_menu}")
                 self.menu_stack = [active_menu]
-                self.current_position = 0
+                
+                # Get the group to reset to if specified
+                reset_group = self.menus[active_menu].get("reset_group", "default")
+                
+                # Find a valid group (with items)
+                valid_group = self.find_valid_group(active_menu, reset_group)
+                self.current_group = valid_group
+                
+                # Use position 0 in the specific group
+                group_items = self.get_group_items(active_menu, valid_group)
+                if group_items:
+                    self.current_position = group_items[0]
+                else:
+                    self.current_position = 0
+                    
                 return True
         
         return False
@@ -1089,7 +1393,11 @@ def main():
     parser = argparse.ArgumentParser(description="High-Performance Accessible Menu Navigation")
     parser.add_argument("profile", nargs="?", default="fortnite.json", help="Path to menu profile JSON file")
     parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
+    parser.add_argument("--languages", type=str, default="en", help="OCR languages, comma-separated (e.g., 'en,fr,es')")
     args = parser.parse_args()
+    
+    # Parse OCR languages
+    ocr_languages = [lang.strip() for lang in args.languages.split(',')]
     
     # Create the navigator
     navigator = AccessibleMenuNavigator()
@@ -1098,8 +1406,8 @@ def main():
     navigator.set_verbose(args.verbose)
     
     try:
-        # Start the navigator with the specified profile
-        navigator.start(args.profile)
+        # Start the navigator with the specified profile and languages
+        navigator.start(args.profile, ocr_languages)
     except KeyboardInterrupt:
         # Handle Ctrl+C gracefully
         print("\nKeyboard interrupt received. Exiting...")

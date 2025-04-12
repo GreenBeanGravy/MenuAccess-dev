@@ -9,7 +9,7 @@ class BulkEditElementsDialog(wx.Dialog):
     """Dialog for editing properties across multiple elements"""
     
     def __init__(self, parent):
-        super().__init__(parent, title="Bulk Edit Elements", size=(400, 300))
+        super().__init__(parent, title="Bulk Edit Elements", size=(400, 380))
         
         # Initialize UI
         self.init_ui()
@@ -71,6 +71,20 @@ class BulkEditElementsDialog(wx.Dialog):
         group_box.Add(self.group_ctrl, proportion=1)
         main_sizer.Add(group_box, flag=wx.ALL | wx.EXPAND, border=10)
         
+        # Custom announcement
+        announcement_box = wx.BoxSizer(wx.HORIZONTAL)
+        self.announcement_cb = wx.CheckBox(panel, label="Clear custom announcement")
+        
+        announcement_box.Add(self.announcement_cb, flag=wx.ALIGN_CENTER_VERTICAL)
+        main_sizer.Add(announcement_box, flag=wx.ALL | wx.EXPAND, border=10)
+        
+        # Clear OCR regions
+        ocr_box = wx.BoxSizer(wx.HORIZONTAL)
+        self.ocr_cb = wx.CheckBox(panel, label="Clear OCR regions")
+        
+        ocr_box.Add(self.ocr_cb, flag=wx.ALIGN_CENTER_VERTICAL)
+        main_sizer.Add(ocr_box, flag=wx.ALL | wx.EXPAND, border=10)
+        
         # Buttons
         button_sizer = wx.BoxSizer(wx.HORIZONTAL)
         apply_btn = wx.Button(panel, wx.ID_OK, "Apply")
@@ -102,5 +116,11 @@ class BulkEditElementsDialog(wx.Dialog):
         if self.group_cb.GetValue():
             group = self.group_ctrl.GetValue()
             changes['group'] = group if group else "default"
+        
+        if self.announcement_cb.GetValue():
+            changes['clear_announcement'] = True
+            
+        if self.ocr_cb.GetValue():
+            changes['clear_ocr'] = True
         
         return changes

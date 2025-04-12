@@ -10,6 +10,198 @@ from pflib.dialogs import PixelColorConditionDialog, RegionColorConditionDialog,
 from pflib.bulk_edit_dialog import BulkEditElementsDialog
 from pflib.condition_bulk_edit import BulkEditConditionsDialog
 
+class GroupManagerDialog(wx.Dialog):
+    """Dialog for managing element groups in a menu"""
+    
+    def __init__(self, parent, menu_data):
+        super().__init__(parent, title="Group Manager", size=(400, 400))
+        
+        self.menu_data = menu_data
+        
+        # Collect all existing groups
+        self.groups = set(["default"])
+        if "items" in self.menu_data:
+            for item in self.menu_data["items"]:
+                if len(item) > 5 and item[5]:
+                    self.groups.add(item[5])
+        
+        self.init_ui()
+        self.Center()
+        
+    def init_ui(self):
+        panel = wx.Panel(self)
+        main_sizer = wx.BoxSizer(wx.VERTICAL)
+        
+        # Instructions
+        instructions = wx.StaticText(panel, label="Manage element groups in this menu:")
+        main_sizer.Add(instructions, flag=wx.ALL | wx.EXPAND, border=10)
+        
+        # Group list
+        list_label = wx.StaticText(panel, label="Groups:")
+        main_sizer.Add(list_label, flag=wx.LEFT | wx.RIGHT | wx.TOP, border=10)
+        
+        self.group_list = wx.ListBox(panel, choices=sorted(list(self.groups)), size=(-1, 200))
+        main_sizer.Add(self.group_list, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
+        
+        # Group actions
+        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        
+        self.add_btn = wx.Button(panel, label="Add Group")
+        self.rename_btn = wx.Button(panel, label="Rename Group")
+        self.delete_btn = wx.Button(panel, label="Delete Group")
+        
+        self.add_btn.Bind(wx.EVT_BUTTON, self.on_add_group)
+        self.rename_btn.Bind(wx.EVT_BUTTON, self.on_rename_group)
+        self.delete_btn.Bind(wx.EVT_BUTTON, self.on_delete_group)
+        
+        btn_sizer.Add(self.add_btn, flag=wx.RIGHT, border=5)
+        btn_sizer.Add(self.rename_btn, flag=wx.RIGHT, border=5)
+        btn_sizer.Add(self.delete_btn)
+        
+        main_sizer.Add(btn_sizer, flag=wx.ALL | wx.ALIGN_CENTER, border=10)
+        
+        # Element count per group
+        self.count_text = wx.StaticText(panel, label="")
+        main_sizer.Add(self.count_text, flag=wx.ALL | wx.EXPAND, border=10)
+        
+        # OK/Cancel buttons
+        btn_sizer = wx.StdDialogButtonSizer()
+        ok_button = wx.Button(panel, wx.ID_OK)
+        cancel_button = wx.Button(panel, wx.ID_CANCEL)
+        btn_sizer.AddButton(ok_button)
+        btn_sizer.AddButton(cancel_button)
+        btn_sizer.Realize()
+        
+        main_sizer.Add(btn_sizer, flag=wx.ALL | wx.ALIGN_RIGHT, border=10)
+        
+        panel.SetSizer(main_sizer)
+        
+        # Update button states
+        self.update_ui()
+        
+        # Bind list selection event
+        self.group_list.Bind(wx.EVT_LISTBOX, self.on_group_selected)
+        
+    def on_group_selected(self, event):
+        """Handle group selection"""
+        self.update_ui()
+    
+    def update_ui(self):
+        """Update UI based on current state"""
+        selection = self.group_list.GetSelection()
+        has_selection = selection != wx.NOT_FOUND
+        
+        # Update buttons
+        self.rename_btn.Enable(has_selection)
+        self.delete_btn.Enable(has_selection and self.group_list.GetString(selection) != "default")
+        
+        # Update element count text
+        if has_selection:
+            group_name = self.group_list.GetString(selection)
+            count = self.count_elements_in_group(group_name)
+            self.count_text.SetLabel(f"Elements in group '{group_name}': {count}")
+        else:
+            self.count_text.SetLabel("")
+    
+    def count_elements_in_group(self, group_name):
+        """Count how many elements are in a specific group"""
+        count = 0
+        if "items" in self.menu_data:
+            for item in self.menu_data["items"]:
+                item_group = item[5] if len(item) > 5 else "default"
+                if item_group == group_name:
+                    count += 1
+        return count
+    
+    def on_add_group(self, event):
+        """Add a new group"""
+        dialog = wx.TextEntryDialog(self, "Enter new group name:", "Add Group")
+        if dialog.ShowModal() == wx.ID_OK:
+            group_name = dialog.GetValue().strip()
+            if group_name:
+                if group_name in self.groups:
+                    wx.MessageBox(f"Group '{group_name}' already exists", "Duplicate Group", wx.ICON_ERROR)
+                else:
+                    self.groups.add(group_name)
+                    self.group_list.Set(sorted(list(self.groups)))
+                    # Select the new group
+                    self.group_list.SetSelection(self.group_list.FindString(group_name))
+                    self.update_ui()
+        dialog.Destroy()
+    
+    def on_rename_group(self, event):
+        """Rename the selected group"""
+        selection = self.group_list.GetSelection()
+        if selection == wx.NOT_FOUND:
+            return
+            
+        old_name = self.group_list.GetString(selection)
+        if old_name == "default":
+            wx.MessageBox("Cannot rename the 'default' group", "Error", wx.ICON_ERROR)
+            return
+            
+        dialog = wx.TextEntryDialog(self, "Enter new group name:", "Rename Group", old_name)
+        if dialog.ShowModal() == wx.ID_OK:
+            new_name = dialog.GetValue().strip()
+            if new_name:
+                if new_name in self.groups and new_name != old_name:
+                    wx.MessageBox(f"Group '{new_name}' already exists", "Duplicate Group", wx.ICON_ERROR)
+                else:
+                    # Update all elements with this group
+                    if "items" in self.menu_data:
+                        for item in self.menu_data["items"]:
+                            if len(item) > 5 and item[5] == old_name:
+                                item[5] = new_name
+                    
+                    # Update group list
+                    self.groups.remove(old_name)
+                    self.groups.add(new_name)
+                    self.group_list.Set(sorted(list(self.groups)))
+                    # Select the renamed group
+                    self.group_list.SetSelection(self.group_list.FindString(new_name))
+                    self.update_ui()
+                    
+                    # Set result to true to indicate changes were made
+                    self.SetReturnCode(wx.ID_OK)
+        dialog.Destroy()
+    
+    def on_delete_group(self, event):
+        """Delete the selected group"""
+        selection = self.group_list.GetSelection()
+        if selection == wx.NOT_FOUND:
+            return
+            
+        group_name = self.group_list.GetString(selection)
+        if group_name == "default":
+            wx.MessageBox("Cannot delete the 'default' group", "Error", wx.ICON_ERROR)
+            return
+            
+        count = self.count_elements_in_group(group_name)
+        if count > 0:
+            msg = f"Group '{group_name}' contains {count} elements. "
+            msg += "Deleting this group will move these elements to the 'default' group. Continue?"
+            
+            if wx.MessageBox(msg, "Confirm Delete", wx.YES_NO | wx.ICON_QUESTION) != wx.YES:
+                return
+                
+            # Move elements to default group
+            if "items" in self.menu_data:
+                for item in self.menu_data["items"]:
+                    if len(item) > 5 and item[5] == group_name:
+                        item[5] = "default"
+        
+        # Remove the group
+        self.groups.remove(group_name)
+        self.group_list.Set(sorted(list(self.groups)))
+        
+        # Clear selection
+        self.group_list.SetSelection(wx.NOT_FOUND)
+        self.update_ui()
+        
+        # Set result to true to indicate changes were made
+        self.SetReturnCode(wx.ID_OK)
+
+
 class MenuPanel(scrolled.ScrolledPanel):
     """Panel for displaying and editing menu data"""
     
@@ -120,6 +312,28 @@ class MenuPanel(scrolled.ScrolledPanel):
         elements_box = wx.StaticBox(self, label="Menu UI Elements")
         elements_sizer = wx.StaticBoxSizer(elements_box, wx.VERTICAL)
         
+        # Group filter
+        group_filter_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        group_filter_label = wx.StaticText(self, label="Filter by Group:")
+        
+        # Collect all groups
+        all_groups = self.get_all_groups()
+        all_groups.insert(0, "All Groups")  # Add option to show all
+        
+        self.group_filter = wx.Choice(self, choices=all_groups)
+        self.group_filter.SetSelection(0)  # Default to "All Groups"
+        self.group_filter.Bind(wx.EVT_CHOICE, self.on_group_filter_changed)
+        
+        # Manage groups button
+        manage_groups_btn = wx.Button(self, label="Manage Groups")
+        manage_groups_btn.Bind(wx.EVT_BUTTON, self.on_manage_groups)
+        
+        group_filter_sizer.Add(group_filter_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        group_filter_sizer.Add(self.group_filter, proportion=1, flag=wx.RIGHT, border=10)
+        group_filter_sizer.Add(manage_groups_btn)
+        
+        elements_sizer.Add(group_filter_sizer, flag=wx.EXPAND | wx.ALL, border=5)
+        
         # Elements buttons
         element_btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
         add_element_btn = wx.Button(self, label="Add UI Element")
@@ -139,6 +353,8 @@ class MenuPanel(scrolled.ScrolledPanel):
         self.elements_list.InsertColumn(2, "Position", width=80)
         self.elements_list.InsertColumn(3, "Group", width=80)
         self.elements_list.InsertColumn(4, "Submenu", width=80)
+        self.elements_list.InsertColumn(5, "OCR", width=60)
+        self.elements_list.InsertColumn(6, "Custom Format", width=80)
         
         # Populate elements
         self.update_elements_list()
@@ -156,7 +372,51 @@ class MenuPanel(scrolled.ScrolledPanel):
         main_sizer.Add(elements_sizer, flag=wx.EXPAND | wx.ALL, border=10)
         
         self.SetSizer(main_sizer)
+    
+    def get_all_groups(self):
+        """Get all groups used in this menu"""
+        groups = set(["default"])
         
+        if "items" in self.menu_data:
+            for item in self.menu_data["items"]:
+                if len(item) > 5 and item[5]:
+                    groups.add(item[5])
+        
+        return sorted(list(groups))
+    
+    def on_manage_groups(self, event):
+        """Open the group manager dialog"""
+        dialog = GroupManagerDialog(self, self.menu_data)
+        result = dialog.ShowModal()
+        
+        if result == wx.ID_OK:
+            # Update the UI
+            self.update_reset_group_options()
+            self.update_elements_list()
+            
+            # Update the group filter dropdown
+            current_filter = self.group_filter.GetString(self.group_filter.GetSelection())
+            all_groups = self.get_all_groups()
+            all_groups.insert(0, "All Groups")
+            
+            self.group_filter.Set(all_groups)
+            
+            # Try to restore previous selection
+            idx = self.group_filter.FindString(current_filter)
+            if idx != wx.NOT_FOUND:
+                self.group_filter.SetSelection(idx)
+            else:
+                self.group_filter.SetSelection(0)  # Default to "All Groups"
+            
+            # Mark profile as changed
+            self.profile_editor.mark_profile_changed()
+        
+        dialog.Destroy()
+    
+    def on_group_filter_changed(self, event):
+        """Handle group filter dropdown change"""
+        self.update_elements_list()
+    
     def on_rename_menu(self, event):
         """Handle rename menu button click"""
         self.profile_editor.on_rename_menu(event)
@@ -219,25 +479,17 @@ class MenuPanel(scrolled.ScrolledPanel):
     def update_reset_group_options(self):
         """Update the available groups in the reset_group dropdown"""
         # Collect all unique group values from items
-        groups = set(["default"])
-        
-        if "items" in self.menu_data:
-            for item in self.menu_data["items"]:
-                if len(item) > 5 and item[5]:
-                    groups.add(item[5])
-        
-        # Convert to sorted list
-        group_list = sorted(list(groups))
+        groups = self.get_all_groups()
         
         # Remember current value
         current_value = self.reset_group_ctrl.GetValue()
         
         # Update control
         self.reset_group_ctrl.Clear()
-        self.reset_group_ctrl.AppendItems(group_list)
+        self.reset_group_ctrl.AppendItems(groups)
         
         # Restore current value if still valid
-        if current_value in group_list:
+        if current_value in groups:
             self.reset_group_ctrl.SetValue(current_value)
         else:
             self.reset_group_ctrl.SetValue("default")
@@ -269,13 +521,65 @@ class MenuPanel(scrolled.ScrolledPanel):
         
         if "items" not in self.menu_data:
             return
+        
+        # Get current group filter
+        filter_idx = self.group_filter.GetSelection()
+        if filter_idx <= 0:  # "All Groups" or invalid selection
+            selected_group = None
+        else:
+            selected_group = self.group_filter.GetString(filter_idx)
+        
+        # Sort items by group for grouped display
+        sorted_items = []
+        if "items" in self.menu_data:
+            for i, element in enumerate(self.menu_data["items"]):
+                # Get the group (default to "default" if not present)
+                group = element[5] if len(element) > 5 else "default"
+                # Only include items matching the filter, if one is selected
+                if selected_group is None or group == selected_group:
+                    sorted_items.append((i, element, group))
+        
+        # Sort by group
+        sorted_items.sort(key=lambda x: x[2])
+        
+        # Add items to the list
+        current_group = None
+        list_idx = 0
+        
+        for orig_idx, element, group in sorted_items:
+            # Add group header if this is a new group
+            if current_group != group:
+                if list_idx > 0:  # Add separator if not the first group
+                    self.elements_list.InsertItem(list_idx, "")
+                    list_idx += 1
+                
+                # Add group header
+                header_idx = self.elements_list.InsertItem(list_idx, f"[{group}]")
+                self.elements_list.SetItemTextColour(header_idx, wx.Colour(0, 0, 128))  # Dark blue
+                self.elements_list.SetItemBackgroundColour(header_idx, wx.Colour(220, 230, 250))  # Light blue background
+                current_group = group
+                list_idx += 1
             
-        for i, element in enumerate(self.menu_data["items"]):
-            idx = self.elements_list.InsertItem(i, element[1])  # Name
+            # Add the element
+            idx = self.elements_list.InsertItem(list_idx, element[1])  # Name
             self.elements_list.SetItem(idx, 1, element[2])      # Type
             self.elements_list.SetItem(idx, 2, f"({element[0][0]}, {element[0][1]})")  # Position
-            self.elements_list.SetItem(idx, 3, str(element[5]) if len(element) > 5 else "default")  # Group
+            self.elements_list.SetItem(idx, 3, group)  # Group
             self.elements_list.SetItem(idx, 4, str(element[4] or ""))  # Submenu
+            
+            # Check for OCR regions
+            has_ocr = len(element) > 6 and element[6]
+            ocr_count = len(element[6]) if has_ocr else 0
+            self.elements_list.SetItem(idx, 5, str(ocr_count) if ocr_count else "")
+            
+            # Check for custom announcement format
+            has_custom_format = len(element) > 7 and element[7]
+            self.elements_list.SetItem(idx, 6, "Yes" if has_custom_format else "")
+            
+            # Store the original index for this item
+            self.elements_list.SetItemData(idx, orig_idx)
+            
+            list_idx += 1
     
     def on_add_pixel_condition(self, event):
         """Add a new pixel color condition"""
@@ -488,6 +792,18 @@ class MenuPanel(scrolled.ScrolledPanel):
         if selected_count == 0:
             return
             
+        # Check if any of the selected items are group headers or separators
+        has_non_elements = False
+        item = self.elements_list.GetFirstSelected()
+        while item != -1:
+            if not self.elements_list.GetItemData(item):  # No item data means it's a header or separator
+                has_non_elements = True
+                break
+            item = self.elements_list.GetNextSelected(item)
+        
+        if has_non_elements:
+            return  # Don't show context menu for headers/separators
+            
         menu = wx.Menu()
         
         # Show appropriate edit option based on selection count
@@ -522,7 +838,9 @@ class MenuPanel(scrolled.ScrolledPanel):
         item = self.elements_list.GetFirstSelected()
         
         while item != -1:
-            selected_items.append(item)
+            # Skip group headers and separators
+            if self.elements_list.GetItemData(item):
+                selected_items.append(self.elements_list.GetItemData(item))
             item = self.elements_list.GetNextSelected(item)
         
         if not selected_items:
@@ -562,6 +880,7 @@ class MenuPanel(scrolled.ScrolledPanel):
         
         # Update UI
         self.update_elements_list()
+        self.update_reset_group_options()
         self.profile_editor.mark_profile_changed()
         
         # Update status
@@ -576,16 +895,21 @@ class MenuPanel(scrolled.ScrolledPanel):
     
     def on_edit_element(self, event):
         """Edit the selected element"""
-        selected_idx = self.elements_list.GetFirstSelected()
-        if selected_idx == -1:
+        selected_item = self.elements_list.GetFirstSelected()
+        if selected_item == -1:
             return
+        
+        # Get the original index stored in item data
+        orig_idx = self.elements_list.GetItemData(selected_item)
+        if not orig_idx and orig_idx != 0:  # Check for None or 0
+            return  # Skip group headers and separators
             
-        element = self.menu_data["items"][selected_idx]
+        element = self.menu_data["items"][orig_idx]
         
         dialog = UIElementDialog(self, title="Edit UI Element", element=element)
         if dialog.ShowModal() == wx.ID_OK:
             edited_element = dialog.get_element()
-            self.menu_data["items"][selected_idx] = edited_element
+            self.menu_data["items"][orig_idx] = edited_element
             self.update_elements_list()
             self.update_reset_group_options()
             self.profile_editor.mark_profile_changed()
@@ -596,15 +920,20 @@ class MenuPanel(scrolled.ScrolledPanel):
         """Delete the selected element(s)"""
         if self.elements_list.GetSelectedItemCount() == 0:
             return
-            
-        # Get all selected indices in reverse order (to avoid index shifting during deletion)
+        
+        # Get all selected indices
         selected_indices = []
         item = self.elements_list.GetFirstSelected()
         while item != -1:
-            selected_indices.append(item)
+            # Only include actual elements (with item data)
+            if self.elements_list.GetItemData(item) is not None:
+                selected_indices.append(self.elements_list.GetItemData(item))
             item = self.elements_list.GetNextSelected(item)
         
-        # Sort in reverse order
+        if not selected_indices:
+            return
+            
+        # Sort in reverse order to avoid index shifting
         selected_indices.sort(reverse=True)
         
         # Confirm deletion
@@ -621,6 +950,7 @@ class MenuPanel(scrolled.ScrolledPanel):
             del self.menu_data["items"][idx]
         
         self.update_elements_list()
+        self.update_reset_group_options()
         self.profile_editor.mark_profile_changed()
         
         try:
@@ -654,7 +984,9 @@ class MenuPanel(scrolled.ScrolledPanel):
         selected_indices = []
         item = self.elements_list.GetFirstSelected()
         while item != -1:
-            selected_indices.append(item)
+            # Only include actual elements (with item data)
+            if self.elements_list.GetItemData(item) is not None:
+                selected_indices.append(self.elements_list.GetItemData(item))
             item = self.elements_list.GetNextSelected(item)
         
         if not selected_indices:
