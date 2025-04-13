@@ -13,12 +13,12 @@ import sys
 import logging
 import time
 import numpy as np
-import cv2  # OpenCV for HSV conversion
+import cv2
 import argparse
 from PIL import Image
 import mss
 from functools import lru_cache
-import easyocr  # Using EasyOCR instead of pytesseract
+import easyocr
 
 # Setup logging with faster string formatting
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -28,8 +28,6 @@ logger = logging.getLogger("AccessibleMenuNav")
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
 
-# No global MSS instance - will create per-thread instances
-# MSS has thread-local storage issues when shared across threads
 
 class MenuConditionChecker:
     """Ultra-optimized class for checking menu conditions"""
