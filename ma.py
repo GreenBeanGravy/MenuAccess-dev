@@ -390,8 +390,8 @@ class AccessibleMenuNavigator:
     
     def start(self, profile_path, languages=None):
         """Start the navigator with optimized threading"""
-        self.log("Accessible Menu Navigation Active")
-        self.speak("Accessible Menu Navigation started")
+        self.log("Ready!")
+        # self.speak("Accessible Menu Navigation started")
         
         # Initialize OCR reader in the background
         threading.Thread(target=self.init_ocr_reader, args=(languages,), daemon=True).start()
@@ -915,7 +915,7 @@ class AccessibleMenuNavigator:
         """Pop menu from stack and return to previous menu"""
         if len(self.menu_stack) <= 1:
             current_menu = self.menu_stack[0] if self.menu_stack else "No menu"
-            self.speak(f"Main menu: {current_menu}")
+            self.speak(f"{current_menu}")
             return False
         
         # Store the name of the menu we're leaving
@@ -932,7 +932,7 @@ class AccessibleMenuNavigator:
             self.set_position(0)
         
         # Announce menu exit
-        self.speak(f"Exited submenu, returned to {parent_menu.replace('-', ' ')}")
+        # self.speak(f"Exited submenu, returned to {parent_menu.replace('-', ' ')}")
         return True
     
     def get_current_menu_items(self):
@@ -1255,7 +1255,7 @@ class AccessibleMenuNavigator:
             if items:
                 # Found a group with items
                 if self.navigate_to_group(next_group):
-                    self.speak(f"Group: {next_group}")
+                    self.speak(f"{next_group}")
                     return
         
         # If we get here, no other group has items
