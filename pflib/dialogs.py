@@ -1048,7 +1048,8 @@ class UIElementDialog(wx.Dialog):
     """Dialog for creating/editing a UI element"""
     
     def __init__(self, parent, title="Add UI Element", element=None):
-        super().__init__(parent, title=title, size=(550, 650))
+        # Increased height to ensure all sections are visible
+        super().__init__(parent, title=title, size=(550, 750))
         
         # Default values if no element is provided
         self.element = element or [
@@ -1080,11 +1081,15 @@ class UIElementDialog(wx.Dialog):
         # Picker thread
         self.picker_thread = None
         
+        # Create a scrolled panel to ensure all sections are visible
         self.init_ui()
         self.Center()
         
     def init_ui(self):
-        panel = wx.Panel(self)
+        # Use a scrolled panel instead of a regular panel to enable scrolling
+        panel = wx.lib.scrolledpanel.ScrolledPanel(self)
+        panel.SetupScrolling(scroll_x=False, scroll_y=True)
+        
         vbox = wx.BoxSizer(wx.VERTICAL)
         
         # Position section
@@ -1218,7 +1223,7 @@ class UIElementDialog(wx.Dialog):
         
         vbox.Add(ocr_sizer, flag=wx.EXPAND | wx.ALL, border=10)
         
-        # Custom Announcement section
+        # Custom Announcement section - making it more visible
         announce_box = wx.StaticBox(panel, label="Custom Announcement")
         announce_sizer = wx.StaticBoxSizer(announce_box, wx.VERTICAL)
         
@@ -1227,21 +1232,23 @@ class UIElementDialog(wx.Dialog):
         self.custom_announce_cb.SetValue(self.element[7] is not None)
         self.custom_announce_cb.Bind(wx.EVT_CHECKBOX, self.on_custom_announce_toggled)
         
-        # Custom announcement template field
+        # Custom announcement template field - making it larger
         template_label = wx.StaticText(panel, label="Format Template:")
         self.template_ctrl = wx.TextCtrl(panel, 
                                       value=str(self.element[7] or "{name}, {type}, {index}"),
-                                      size=(-1, 60), style=wx.TE_MULTILINE)
+                                      size=(-1, 80), style=wx.TE_MULTILINE)  # Taller textbox
         self.template_ctrl.Enable(self.element[7] is not None)
         
-        # Help text
-        help_text = wx.StaticText(panel, label="Available tags: {name}, {type}, {index}, {menu}, {ocr_tag}, ... ")
+        # Help text - more detailed
+        help_text = wx.StaticText(panel, label="Available tags: {name}, {type}, {index}, {menu}, {submenu}, {group}")
+        help_ocr = wx.StaticText(panel, label="OCR tags: Reference OCR regions with their tag names, e.g. {ocr1}")
         
         # Add to announcement section
         announce_sizer.Add(self.custom_announce_cb, flag=wx.EXPAND | wx.ALL, border=5)
         announce_sizer.Add(template_label, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, border=5)
         announce_sizer.Add(self.template_ctrl, flag=wx.EXPAND | wx.LEFT | wx.RIGHT, border=5)
         announce_sizer.Add(help_text, flag=wx.EXPAND | wx.ALL, border=5)
+        announce_sizer.Add(help_ocr, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=5)
         
         vbox.Add(announce_sizer, flag=wx.EXPAND | wx.ALL, border=10)
         
@@ -1257,9 +1264,14 @@ class UIElementDialog(wx.Dialog):
         wx.CallAfter(self.update_position_color)
         
         panel.SetSizer(vbox)
+        panel.Layout()
+        
+        # Ensure the panel is sized properly to include all elements
+        panel.SetMinSize(panel.GetBestSize())
         
         # Bind close event
         self.Bind(wx.EVT_CLOSE, self.on_close)
+
         
     def on_close(self, event):
         """Ensure tracker is stopped when dialog closes"""

@@ -1,5 +1,5 @@
 """
-Menu panel for editing menu data
+Menu panel for editing menu data with improved drag and drop
 """
 
 import wx
@@ -17,6 +17,8 @@ class GroupManagerDialog(wx.Dialog):
         super().__init__(parent, title="Group Manager", size=(400, 400))
         
         self.menu_data = menu_data
+        # Store parent for immediate refresh
+        self.menu_panel = parent
         
         # Collect all existing groups
         self.groups = set(["default"])
@@ -41,7 +43,7 @@ class GroupManagerDialog(wx.Dialog):
         main_sizer.Add(list_label, flag=wx.LEFT | wx.RIGHT | wx.TOP, border=10)
         
         self.group_list = wx.ListBox(panel, choices=sorted(list(self.groups)), size=(-1, 200))
-        main_sizer.Add(self.group_list, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
+        main_sizer.Add(self.group_list, proportion=1, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
         
         # Group actions
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -127,6 +129,12 @@ class GroupManagerDialog(wx.Dialog):
                     # Select the new group
                     self.group_list.SetSelection(self.group_list.FindString(group_name))
                     self.update_ui()
+                    
+                    # Set return code and trigger immediate refresh in parent
+                    self.SetReturnCode(wx.ID_OK)
+                    
+                    # CRITICAL: Immediately refresh parent panel
+                    wx.CallAfter(self.menu_panel.refresh_entire_panel)
         dialog.Destroy()
     
     def on_rename_group(self, event):
@@ -163,6 +171,9 @@ class GroupManagerDialog(wx.Dialog):
                     
                     # Set result to true to indicate changes were made
                     self.SetReturnCode(wx.ID_OK)
+                    
+                    # CRITICAL: Immediately refresh parent panel
+                    wx.CallAfter(self.menu_panel.refresh_entire_panel)
         dialog.Destroy()
     
     def on_delete_group(self, event):
@@ -200,6 +211,9 @@ class GroupManagerDialog(wx.Dialog):
         
         # Set result to true to indicate changes were made
         self.SetReturnCode(wx.ID_OK)
+        
+        # CRITICAL: Immediately refresh parent panel
+        wx.CallAfter(self.menu_panel.refresh_entire_panel)
 
 
 class MenuPanel(scrolled.ScrolledPanel):
@@ -212,6 +226,13 @@ class MenuPanel(scrolled.ScrolledPanel):
         self.menu_data = menu_data
         self.profile_editor = profile_editor
         
+        # Drag and drop state
+        self.dragging = False
+        self.drag_start_pos = None
+        self.drag_item_index = None
+        self.drag_group = False
+        self.drop_indicator_line = None
+        
         # Bind keyboard events
         self.Bind(wx.EVT_KEY_DOWN, self.on_key_down)
         
@@ -221,10 +242,12 @@ class MenuPanel(scrolled.ScrolledPanel):
         # Update reset group options
         self.update_reset_group_options()
         
-        self.SetupScrolling()
+        # Configure scrolling to work properly
+        self.SetupScrolling(scrollToTop=False, scrollIntoView=False, rate_x=20, rate_y=20)
         
     def init_ui(self):
-        main_sizer = wx.BoxSizer(wx.VERTICAL)
+        # Main sizer that contains everything
+        self.main_sizer = wx.BoxSizer(wx.VERTICAL)
         
         # Menu Header
         header_sizer = wx.BoxSizer(wx.HORIZONTAL)
@@ -267,7 +290,7 @@ class MenuPanel(scrolled.ScrolledPanel):
         header_sizer.Add(rename_btn, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
         header_sizer.Add(delete_btn, flag=wx.ALIGN_CENTER_VERTICAL)
         
-        main_sizer.Add(header_sizer, flag=wx.EXPAND | wx.ALL, border=5)
+        self.main_sizer.Add(header_sizer, flag=wx.EXPAND | wx.ALL, border=5)
         
         # Conditions section
         conditions_box = wx.StaticBox(self, label="Menu Detection Conditions")
@@ -289,9 +312,10 @@ class MenuPanel(scrolled.ScrolledPanel):
         conditions_sizer.Add(btn_sizer, flag=wx.ALL, border=5)
         
         # Conditions list - using just wx.LC_REPORT since multi-select is default
+        # Make sure it's resizable by adding proportion=1
         self.conditions_list = wx.ListCtrl(self, style=wx.LC_REPORT, size=(-1, 150))
-        self.conditions_list.InsertColumn(0, "Type", width=100)
-        self.conditions_list.InsertColumn(1, "Details", width=300)
+        self.conditions_list.InsertColumn(0, "Type", width=150)
+        self.conditions_list.InsertColumn(1, "Details", width=450)
         
         # Populate conditions
         self.update_conditions_list()
@@ -306,7 +330,7 @@ class MenuPanel(scrolled.ScrolledPanel):
         self.conditions_list.Bind(wx.EVT_KEY_DOWN, self.on_conditions_key)
         
         conditions_sizer.Add(self.conditions_list, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
-        main_sizer.Add(conditions_sizer, flag=wx.EXPAND | wx.ALL, border=10)
+        self.main_sizer.Add(conditions_sizer, proportion=1, flag=wx.EXPAND | wx.ALL, border=10)
         
         # UI Elements section
         elements_box = wx.StaticBox(self, label="Menu UI Elements")
@@ -346,15 +370,21 @@ class MenuPanel(scrolled.ScrolledPanel):
         element_btn_sizer.Add(paste_element_btn)
         elements_sizer.Add(element_btn_sizer, flag=wx.ALL, border=5)
         
-        # Elements list - using just wx.LC_REPORT since multi-select is default
-        self.elements_list = wx.ListCtrl(self, style=wx.LC_REPORT, size=(-1, 200))
-        self.elements_list.InsertColumn(0, "Name", width=150)
-        self.elements_list.InsertColumn(1, "Type", width=80)
-        self.elements_list.InsertColumn(2, "Position", width=80)
-        self.elements_list.InsertColumn(3, "Group", width=80)
-        self.elements_list.InsertColumn(4, "Submenu", width=80)
-        self.elements_list.InsertColumn(5, "OCR", width=60)
-        self.elements_list.InsertColumn(6, "Custom Format", width=80)
+        # Elements list - with wider columns and drag-and-drop support
+        self.elements_list = wx.ListCtrl(self, style=wx.LC_REPORT | wx.LC_SINGLE_SEL, size=(-1, 200))
+        self.elements_list.InsertColumn(0, "Name", width=225)
+        self.elements_list.InsertColumn(1, "Type", width=120)
+        self.elements_list.InsertColumn(2, "Position", width=120)
+        self.elements_list.InsertColumn(3, "Group", width=120)
+        self.elements_list.InsertColumn(4, "Submenu", width=120)
+        self.elements_list.InsertColumn(5, "OCR", width=90)
+        self.elements_list.InsertColumn(6, "Custom Format", width=120)
+        
+        # Set up drag and drop events
+        self.elements_list.Bind(wx.EVT_LEFT_DOWN, self.on_element_left_down)
+        self.elements_list.Bind(wx.EVT_MOTION, self.on_element_motion)
+        self.elements_list.Bind(wx.EVT_LEFT_UP, self.on_element_left_up)
+        self.elements_list.Bind(wx.EVT_LEAVE_WINDOW, self.on_element_leave_window)
         
         # Populate elements
         self.update_elements_list()
@@ -369,12 +399,323 @@ class MenuPanel(scrolled.ScrolledPanel):
         self.elements_list.Bind(wx.EVT_KEY_DOWN, self.on_elements_key)
         
         elements_sizer.Add(self.elements_list, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
-        main_sizer.Add(elements_sizer, flag=wx.EXPAND | wx.ALL, border=10)
         
-        self.SetSizer(main_sizer)
+        # Add drag and drop help text
+        drag_help = wx.StaticText(self, label="Tip: Drag elements or group headers to rearrange them")
+        drag_help.SetForegroundColour(wx.Colour(100, 100, 100))  # Gray text
+        elements_sizer.Add(drag_help, flag=wx.ALL, border=5)
+        
+        self.main_sizer.Add(elements_sizer, proportion=2, flag=wx.EXPAND | wx.ALL, border=10)
+        
+        self.SetSizer(self.main_sizer)
+    
+    # Drag and drop implementation for elements list
+    def on_element_left_down(self, event):
+        """Start drag operation on left mouse button down"""
+        # Get the item under cursor
+        item, flags = self.elements_list.HitTest(event.GetPosition())
+        
+        if item != -1:
+            # Check if it's a group header
+            text = self.elements_list.GetItemText(item)
+            
+            # Select the item
+            self.elements_list.Select(item)
+            
+            # Store the starting information
+            self.drag_start_pos = event.GetPosition()
+            self.drag_item_index = item
+            
+            # Check if it's a group header (special format)
+            if text.startswith("---") and text.endswith("---"):
+                # It's a group header
+                self.drag_group = True
+                # Extract group name
+                self.drag_group_name = text.strip("-").strip()
+            else:
+                # It's a regular element
+                self.drag_group = False
+                # Only allow dragging if it's a real element with data
+                data_idx = self.elements_list.GetItemData(item)
+                if data_idx == -1:  # It's a separator, not a real element
+                    self.drag_item_index = None
+                    self.drag_start_pos = None
+        
+        event.Skip()
+    
+    def on_element_motion(self, event):
+        """Handle mouse motion for drag-and-drop operations"""
+        if not self.drag_start_pos or not self.drag_item_index:
+            event.Skip()
+            return
+            
+        # Only start drag after moving a bit
+        if not self.dragging:
+            # Check if we've moved enough to start dragging
+            start_pos = self.drag_start_pos
+            curr_pos = event.GetPosition()
+            
+            # Require at least 5 pixels of movement
+            if abs(curr_pos.x - start_pos.x) > 5 or abs(curr_pos.y - start_pos.y) > 5:
+                self.dragging = True
+                
+                # Setting hand cursor
+                self.elements_list.SetCursor(wx.Cursor(wx.CURSOR_HAND))
+                
+                # Provide better visual hint for the item being dragged
+                self.elements_list.SetItemBackgroundColour(self.drag_item_index, wx.Colour(230, 230, 255))
+        
+        if self.dragging:
+            # Find potential drop position
+            pos = event.GetPosition()
+            item, flags = self.elements_list.HitTest(pos)
+            
+            # Clear old indicator if it exists
+            if self.drop_indicator_line is not None:
+                self.elements_list.RefreshItem(self.drop_indicator_line)
+                self.drop_indicator_line = None
+            
+            # Show drop indicator if over a valid item
+            if item != -1 and item != self.drag_item_index:
+                # Don't allow dropping into separators
+                data_idx = self.elements_list.GetItemData(item)
+                if data_idx != -1 or self.elements_list.GetItemText(item).startswith("---"):
+                    self.drop_indicator_line = item
+                    
+                    # Get item rectangle
+                    rect = self.elements_list.GetItemRect(item)
+                    
+                    # Draw drop indicator line
+                    dc = wx.ClientDC(self.elements_list)
+                    dc.SetPen(wx.Pen(wx.BLUE, 2))
+                    
+                    # Draw at top or bottom based on position
+                    if pos.y < rect.y + rect.height/2:
+                        # Draw at top
+                        dc.DrawLine(rect.x, rect.y, rect.x + rect.width, rect.y)
+                    else:
+                        # Draw at bottom
+                        dc.DrawLine(rect.x, rect.y + rect.height, 
+                                   rect.x + rect.width, rect.y + rect.height)
+        
+        event.Skip()
+    
+    def on_element_left_up(self, event):
+        """Handle mouse button up to complete drag operation"""
+        if self.dragging and self.drag_item_index is not None:
+            # Find drop target
+            pos = event.GetPosition()
+            drop_item, flags = self.elements_list.HitTest(pos)
+            
+            if drop_item != -1 and drop_item != self.drag_item_index:
+                # Get destination item data
+                if self.drag_group:
+                    # Moving a group
+                    self.move_group(self.drag_group_name, drop_item)
+                else:
+                    # Moving an element - get actual item data index
+                    src_data_idx = self.elements_list.GetItemData(self.drag_item_index)
+                    if src_data_idx != -1:  # Only move real elements, not separators
+                        self.move_element(self.drag_item_index, drop_item)
+            
+            # Reset drag state
+            self.end_drag()
+            
+            # Update the UI
+            self.update_elements_list()
+            self.profile_editor.mark_profile_changed()
+        else:
+            # Reset any drag state
+            self.end_drag()
+            
+        event.Skip()
+    
+    def on_element_leave_window(self, event):
+        """Handle mouse leaving the window during drag"""
+        self.end_drag()
+        event.Skip()
+    
+    def end_drag(self):
+        """Reset all drag-and-drop state"""
+        if self.dragging:
+            # Setting default cursor
+            self.elements_list.SetCursor(wx.Cursor(wx.CURSOR_DEFAULT))
+            
+            # Clear any highlighting
+            if self.drag_item_index is not None:
+                self.elements_list.SetItemBackgroundColour(self.drag_item_index, 
+                                                          self.elements_list.GetBackgroundColour())
+            
+            # Clear drop indicator
+            if self.drop_indicator_line is not None:
+                self.elements_list.RefreshItem(self.drop_indicator_line)
+        
+        # Reset all drag state
+        self.dragging = False
+        self.drag_start_pos = None
+        self.drag_item_index = None
+        self.drag_group = False
+        self.drop_indicator_line = None
+        if hasattr(self, 'drag_group_name'):
+            delattr(self, 'drag_group_name')
+    
+    def move_element(self, src_list_idx, dst_list_idx):
+        """Move an element in the UI elements list"""
+        if not self.menu_data or "items" not in self.menu_data:
+            return False
+            
+        # Convert list indices to data indices
+        src_data_idx = self.elements_list.GetItemData(src_list_idx)
+        if src_data_idx == -1:  # Not a real element
+            return False
+            
+        # Check destination - if it's a group header, find first item in that group
+        dst_text = self.elements_list.GetItemText(dst_list_idx)
+        dst_data_idx = self.elements_list.GetItemData(dst_list_idx)
+        
+        if dst_text.startswith("---"):  # It's a group header
+            # Extract group name from the header text
+            dst_group = dst_text.strip("-").strip()
+            
+            # Change element's group membership
+            element = self.menu_data["items"][src_data_idx]
+            if len(element) <= 5:
+                element.append(dst_group)
+            else:
+                element[5] = dst_group
+                
+            return True
+        elif dst_data_idx == -1:  # It's a separator or other non-element
+            # Find next valid element
+            found_idx = None
+            for i in range(dst_list_idx + 1, self.elements_list.GetItemCount()):
+                idx = self.elements_list.GetItemData(i)
+                if idx != -1:
+                    found_idx = idx
+                    break
+            
+            if found_idx is None:
+                # Try previous element
+                for i in range(dst_list_idx - 1, -1, -1):
+                    idx = self.elements_list.GetItemData(i)
+                    if idx != -1:
+                        found_idx = idx
+                        break
+            
+            if found_idx is None:
+                return False  # No valid target found
+                
+            dst_data_idx = found_idx
+        
+        # Move the element in the data
+        element = self.menu_data["items"].pop(src_data_idx)
+        
+        # If destination comes after source in the original array, adjust index
+        if dst_data_idx > src_data_idx:
+            dst_data_idx -= 1
+            
+        # Find group of destination
+        dst_element = self.menu_data["items"][dst_data_idx]
+        dst_group = dst_element[5] if len(dst_element) > 5 else "default"
+        
+        # Change group if needed
+        src_group = element[5] if len(element) > 5 else "default"
+        if src_group != dst_group:
+            if len(element) <= 5:
+                element.append(dst_group)
+            else:
+                element[5] = dst_group
+        
+        # Insert at destination
+        self.menu_data["items"].insert(dst_data_idx, element)
+        return True
+    
+    def move_group(self, group_name, dst_list_idx):
+        """Move a group in the UI elements list"""
+        if not self.menu_data or "items" not in self.menu_data:
+            return False
+            
+        # Find all elements in the source group
+        src_elements = []
+        src_indices = []
+        
+        for i, element in enumerate(self.menu_data["items"]):
+            element_group = element[5] if len(element) > 5 else "default"
+            if element_group == group_name:
+                src_elements.append(copy.deepcopy(element))
+                src_indices.append(i)
+        
+        if not src_elements:
+            return False  # Nothing to move
+        
+        # Determine destination group
+        dst_group = None
+        
+        # Check if the destination is a group header
+        dst_text = self.elements_list.GetItemText(dst_list_idx)
+        if dst_text.startswith("---"):
+            # It's a group header - extract group name
+            dst_group = dst_text.strip("-").strip()
+        else:
+            # It's an element or separator - find its group
+            dst_data_idx = self.elements_list.GetItemData(dst_list_idx)
+            if dst_data_idx != -1:
+                # It's a real element - get its group
+                dst_element = self.menu_data["items"][dst_data_idx]
+                dst_group = dst_element[5] if len(dst_element) > 5 else "default"
+            else:
+                # Find next group
+                for i in range(dst_list_idx, self.elements_list.GetItemCount()):
+                    text = self.elements_list.GetItemText(i)
+                    if text.startswith("---"):
+                        dst_group = text.strip("-").strip()
+                        break
+                
+                if dst_group is None:
+                    # Find previous group
+                    for i in range(dst_list_idx, -1, -1):
+                        text = self.elements_list.GetItemText(i)
+                        if text.startswith("---"):
+                            dst_group = text.strip("-").strip()
+                            break
+        
+        if dst_group is None or dst_group == group_name:
+            return False  # No valid target found or same group
+        
+        # Find all elements in the destination group
+        dst_indices = []
+        for i, element in enumerate(self.menu_data["items"]):
+            element_group = element[5] if len(element) > 5 else "default"
+            if element_group == dst_group:
+                dst_indices.append(i)
+        
+        if not dst_indices:
+            # Destination group is empty - just add at the end
+            # First remove source elements (in reverse order)
+            for idx in sorted(src_indices, reverse=True):
+                self.menu_data["items"].pop(idx)
+            
+            # Add to the end
+            for element in src_elements:
+                self.menu_data["items"].append(element)
+        else:
+            # Destination group exists - insert before the first element of that group
+            dst_idx = min(dst_indices)
+            
+            # First remove source elements (in reverse order)
+            for idx in sorted(src_indices, reverse=True):
+                self.menu_data["items"].pop(idx)
+                if idx < dst_idx:
+                    dst_idx -= 1
+            
+            # Insert at destination
+            for i, element in enumerate(src_elements):
+                self.menu_data["items"].insert(dst_idx + i, element)
+        
+        return True
     
     def get_all_groups(self):
-        """Get all groups used in this menu"""
+        """Get all groups used in this menu - always fresh from element data"""
         groups = set(["default"])
         
         if "items" in self.menu_data:
@@ -390,31 +731,63 @@ class MenuPanel(scrolled.ScrolledPanel):
         result = dialog.ShowModal()
         
         if result == wx.ID_OK:
-            # Update the UI
-            self.update_reset_group_options()
-            self.update_elements_list()
-            
-            # Update the group filter dropdown
-            current_filter = self.group_filter.GetString(self.group_filter.GetSelection())
-            all_groups = self.get_all_groups()
-            all_groups.insert(0, "All Groups")
-            
-            self.group_filter.Set(all_groups)
-            
-            # Try to restore previous selection
-            idx = self.group_filter.FindString(current_filter)
-            if idx != wx.NOT_FOUND:
-                self.group_filter.SetSelection(idx)
-            else:
-                self.group_filter.SetSelection(0)  # Default to "All Groups"
-            
+            # The immediate refresh happens in the dialog methods directly
             # Mark profile as changed
             self.profile_editor.mark_profile_changed()
         
         dialog.Destroy()
     
+    def refresh_entire_panel(self):
+        """Completely refresh the entire panel and all its components"""
+        print("Complete panel refresh triggered!")
+        
+        # 1. Update the reset_group options in menu properties
+        self.update_reset_group_options()
+        
+        # 2. Completely rebuild the group filter dropdown with fresh data
+        self.rebuild_group_filter()
+        
+        # 3. Force a complete refresh of the elements list
+        self.update_elements_list()
+        
+        # 4. Force a complete refresh of the conditions list
+        self.update_conditions_list()
+        
+        # 5. Force a layout refresh to ensure everything is properly sized
+        self.Layout()
+        self.Refresh()
+    
+    def rebuild_group_filter(self):
+        """Completely rebuild the group filter dropdown with fresh data"""
+        # Remember what was selected before
+        old_selection = self.group_filter.GetSelection()
+        old_group = None
+        if old_selection != wx.NOT_FOUND:
+            old_group = self.group_filter.GetString(old_selection)
+        
+        # Get fresh group data
+        fresh_groups = self.get_all_groups()
+        
+        # Rebuild the dropdown
+        self.group_filter.Clear()
+        self.group_filter.Append("All Groups")
+        for group in fresh_groups:
+            self.group_filter.Append(group)
+        
+        # Try to restore selection
+        if old_group:
+            new_index = self.group_filter.FindString(old_group)
+            if new_index != wx.NOT_FOUND:
+                self.group_filter.SetSelection(new_index)
+            else:
+                # If the group was renamed, just select "All Groups"
+                self.group_filter.SetSelection(0)
+        else:
+            self.group_filter.SetSelection(0)
+    
     def on_group_filter_changed(self, event):
         """Handle group filter dropdown change"""
+        # Force a complete refresh of the elements list
         self.update_elements_list()
     
     def on_rename_menu(self, event):
@@ -436,11 +809,19 @@ class MenuPanel(scrolled.ScrolledPanel):
         # Handle Ctrl+V (paste)
         elif is_ctrl and key_code == ord('V'):
             self.on_paste_condition(None)
+        # Handle Ctrl+A (select all)
+        elif is_ctrl and key_code == ord('A'):
+            self.select_all_conditions()
         # Handle Delete key
         elif key_code == wx.WXK_DELETE:
             self.on_delete_condition(None)
         else:
             event.Skip()  # Let other handlers process this event
+    
+    def select_all_conditions(self):
+        """Select all conditions in the list"""
+        for i in range(self.conditions_list.GetItemCount()):
+            self.conditions_list.Select(i)
     
     def on_elements_key(self, event):
         """Handle key events specifically for the elements list"""
@@ -453,18 +834,26 @@ class MenuPanel(scrolled.ScrolledPanel):
         # Handle Ctrl+V (paste)
         elif is_ctrl and key_code == ord('V'):
             self.on_paste_element(None)
+        # Handle Ctrl+A (select all)
+        elif is_ctrl and key_code == ord('A'):
+            self.select_all_elements()
         # Handle Delete key
         elif key_code == wx.WXK_DELETE:
             self.on_delete_element(None)
         else:
             event.Skip()  # Let other handlers process this event
     
+    def select_all_elements(self):
+        """Select all elements in the list"""
+        for i in range(self.elements_list.GetItemCount()):
+            # Only select actual elements (not group headers or separators)
+            # Now checking for item data != -1 instead of is not None
+            item_data = self.elements_list.GetItemData(i)
+            if item_data != -1:
+                self.elements_list.Select(i)
+    
     def on_key_down(self, event):
         """Handle keyboard shortcuts in the menu panel"""
-        # Get key code and modifiers
-        key_code = event.GetKeyCode()
-        is_ctrl = event.ControlDown()
-        
         # Let the event propagate to the focused control
         event.Skip()
     
@@ -474,6 +863,11 @@ class MenuPanel(scrolled.ScrolledPanel):
     
     def on_element_dclick(self, event):
         """Handle double-click on an element item"""
+        # We want to distinguish between drag operations and double-clicks
+        # If we're in the middle of a drag operation, don't trigger edit
+        if self.dragging:
+            return
+            
         self.on_edit_element(event)
     
     def update_reset_group_options(self):
@@ -550,13 +944,20 @@ class MenuPanel(scrolled.ScrolledPanel):
             # Add group header if this is a new group
             if current_group != group:
                 if list_idx > 0:  # Add separator if not the first group
-                    self.elements_list.InsertItem(list_idx, "")
+                    separator_idx = self.elements_list.InsertItem(list_idx, "")
+                    # Use -1 for separators as a special marker
+                    self.elements_list.SetItemData(separator_idx, -1)
                     list_idx += 1
                 
-                # Add group header
-                header_idx = self.elements_list.InsertItem(list_idx, f"[{group}]")
+                # Add group header - using a different format to make it clearer
+                header_text = f"--- {group} ---"  # Clearer visual indicator
+                header_idx = self.elements_list.InsertItem(list_idx, header_text)
+                # Make group header visually distinct but not like a button
                 self.elements_list.SetItemTextColour(header_idx, wx.Colour(0, 0, 128))  # Dark blue
-                self.elements_list.SetItemBackgroundColour(header_idx, wx.Colour(220, 230, 250))  # Light blue background
+                self.elements_list.SetItemBackgroundColour(header_idx, wx.Colour(200, 220, 255))  # Light blue background
+                self.elements_list.SetItemFont(header_idx, wx.Font(wx.NORMAL_FONT.GetPointSize(), wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+                # Use -1 for headers as a special marker
+                self.elements_list.SetItemData(header_idx, -1)
                 current_group = group
                 list_idx += 1
             
@@ -580,6 +981,9 @@ class MenuPanel(scrolled.ScrolledPanel):
             self.elements_list.SetItemData(idx, orig_idx)
             
             list_idx += 1
+        
+        # End any drag operation in progress
+        self.end_drag()
     
     def on_add_pixel_condition(self, event):
         """Add a new pixel color condition"""
@@ -780,8 +1184,9 @@ class MenuPanel(scrolled.ScrolledPanel):
                 self.menu_data["items"] = []
                 
             self.menu_data["items"].append(element)
-            self.update_elements_list()
-            self.update_reset_group_options()  # Update available groups
+            
+            # Refresh everything to ensure consistency
+            self.refresh_entire_panel()
             self.profile_editor.mark_profile_changed()
             
         dialog.Destroy()
@@ -796,7 +1201,8 @@ class MenuPanel(scrolled.ScrolledPanel):
         has_non_elements = False
         item = self.elements_list.GetFirstSelected()
         while item != -1:
-            if not self.elements_list.GetItemData(item):  # No item data means it's a header or separator
+            # Check for special marker -1 instead of None
+            if self.elements_list.GetItemData(item) == -1:
                 has_non_elements = True
                 break
             item = self.elements_list.GetNextSelected(item)
@@ -838,9 +1244,10 @@ class MenuPanel(scrolled.ScrolledPanel):
         item = self.elements_list.GetFirstSelected()
         
         while item != -1:
-            # Skip group headers and separators
-            if self.elements_list.GetItemData(item):
-                selected_items.append(self.elements_list.GetItemData(item))
+            # Skip group headers and separators (data == -1)
+            item_data = self.elements_list.GetItemData(item)
+            if item_data != -1:
+                selected_items.append(item_data)
             item = self.elements_list.GetNextSelected(item)
         
         if not selected_items:
@@ -878,9 +1285,8 @@ class MenuPanel(scrolled.ScrolledPanel):
             self.menu_data["items"].append(copy.deepcopy(element))
             count += 1
         
-        # Update UI
-        self.update_elements_list()
-        self.update_reset_group_options()
+        # Refresh everything to ensure consistency
+        self.refresh_entire_panel()
         self.profile_editor.mark_profile_changed()
         
         # Update status
@@ -901,7 +1307,8 @@ class MenuPanel(scrolled.ScrolledPanel):
         
         # Get the original index stored in item data
         orig_idx = self.elements_list.GetItemData(selected_item)
-        if not orig_idx and orig_idx != 0:  # Check for None or 0
+        # Check for -1 (header or separator) instead of checking for None or 0
+        if orig_idx == -1:
             return  # Skip group headers and separators
             
         element = self.menu_data["items"][orig_idx]
@@ -910,8 +1317,9 @@ class MenuPanel(scrolled.ScrolledPanel):
         if dialog.ShowModal() == wx.ID_OK:
             edited_element = dialog.get_element()
             self.menu_data["items"][orig_idx] = edited_element
-            self.update_elements_list()
-            self.update_reset_group_options()
+            
+            # Refresh everything to ensure consistency
+            self.refresh_entire_panel()
             self.profile_editor.mark_profile_changed()
             
         dialog.Destroy()
@@ -926,8 +1334,9 @@ class MenuPanel(scrolled.ScrolledPanel):
         item = self.elements_list.GetFirstSelected()
         while item != -1:
             # Only include actual elements (with item data)
-            if self.elements_list.GetItemData(item) is not None:
-                selected_indices.append(self.elements_list.GetItemData(item))
+            item_data = self.elements_list.GetItemData(item)
+            if item_data != -1:
+                selected_indices.append(item_data)
             item = self.elements_list.GetNextSelected(item)
         
         if not selected_indices:
@@ -945,20 +1354,26 @@ class MenuPanel(scrolled.ScrolledPanel):
         if wx.MessageBox(prompt, "Confirm Delete", wx.YES_NO | wx.ICON_QUESTION) != wx.YES:
             return
         
-        # Delete each selected item
+        # Delete each selected item with safety check
+        items_deleted = 0
         for idx in selected_indices:
-            del self.menu_data["items"][idx]
+            # Add safety check to ensure index is valid
+            if 0 <= idx < len(self.menu_data["items"]):
+                del self.menu_data["items"][idx]
+                items_deleted += 1
+            else:
+                print(f"Skipping invalid index: {idx}, items length: {len(self.menu_data['items'])}")
         
-        self.update_elements_list()
-        self.update_reset_group_options()
+        # Refresh everything to ensure consistency
+        self.refresh_entire_panel()
         self.profile_editor.mark_profile_changed()
         
         try:
             parent_frame = wx.GetTopLevelParent(self.GetParent())
-            if len(selected_indices) == 1:
+            if items_deleted == 1:
                 parent_frame.SetStatusText(f"Deleted 1 element")
             else:
-                parent_frame.SetStatusText(f"Deleted {len(selected_indices)} elements")
+                parent_frame.SetStatusText(f"Deleted {items_deleted} elements")
         except:
             pass
     
@@ -985,8 +1400,9 @@ class MenuPanel(scrolled.ScrolledPanel):
         item = self.elements_list.GetFirstSelected()
         while item != -1:
             # Only include actual elements (with item data)
-            if self.elements_list.GetItemData(item) is not None:
-                selected_indices.append(self.elements_list.GetItemData(item))
+            item_data = self.elements_list.GetItemData(item)
+            if item_data != -1:
+                selected_indices.append(item_data)
             item = self.elements_list.GetNextSelected(item)
         
         if not selected_indices:
@@ -1015,6 +1431,10 @@ class MenuPanel(scrolled.ScrolledPanel):
             # Apply changes to all selected elements
             modified = 0
             for idx in selected_indices:
+                # Safety check
+                if idx >= len(self.menu_data["items"]):
+                    continue
+                    
                 element = self.menu_data["items"][idx]
                 
                 # Apply type change if specified
@@ -1036,13 +1456,24 @@ class MenuPanel(scrolled.ScrolledPanel):
                         element.append(None)
                     element[5] = changes['group']
                 
+                # Apply clear_announcement change if specified
+                if 'clear_announcement' in changes:
+                    # Ensure element list is long enough
+                    while len(element) < 8:
+                        element.append(None)
+                    element[7] = None
+                    
+                # Apply clear_ocr change if specified
+                if 'clear_ocr' in changes:
+                    # Ensure element list is long enough
+                    while len(element) < 7:
+                        element.append([])
+                    element[6] = []
+                
                 modified += 1
             
-            # Update the list
-            self.update_elements_list()
-            
-            # Update available reset groups
-            self.update_reset_group_options()
+            # Refresh everything to ensure consistency
+            self.refresh_entire_panel()
             
             # Mark profile as changed
             self.profile_editor.mark_profile_changed()
@@ -1115,7 +1546,7 @@ class MenuPanel(scrolled.ScrolledPanel):
                 
                 modified += 1
             
-            # Apply to region color conditions (only tolerance)
+            # Apply to region color conditions 
             for idx in region_color_indices:
                 condition = self.menu_data["conditions"][idx]
                 
@@ -1129,7 +1560,7 @@ class MenuPanel(scrolled.ScrolledPanel):
                 
                 modified += 1
             
-            # Update the list
+            # Update the conditions list
             self.update_conditions_list()
             
             # Mark profile as changed

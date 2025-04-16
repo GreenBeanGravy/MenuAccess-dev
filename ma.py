@@ -292,10 +292,11 @@ class AccessibleMenuNavigator:
         self.menus = {}
         self.verbose = False
         
-        # Group navigation
+        # Group navigation - update this section
         self.current_group = "default"
         self.group_positions = {}  # Stores the position within each group
-        self.menu_groups = {}     # Stores the groups for each menu
+        self.menu_groups = {}      # Stores the groups for each menu
+        self.menu_group_positions = {}  # Format: {menu_id: {group_name: position}}
         
         # OCR setup
         self.reader = None  # Will be initialized when needed
@@ -823,7 +824,13 @@ class AccessibleMenuNavigator:
                 group_items = self.get_group_items(current_menu, valid_group)
                 
                 if group_items:
-                    self.current_position = group_items[0]
+                    # Get last saved position for this group in this menu
+                    if current_menu in self.menu_group_positions and valid_group in self.menu_group_positions[current_menu]:
+                        self.current_position = self.menu_group_positions[current_menu][valid_group]
+                    else:
+                        # Default to first item in group
+                        self.current_position = group_items[0]
+                    
                     details = self.get_item_details(current_menu, self.current_position)
                     if details:
                         self.enqueue_mouse_move(details['coordinates'])
@@ -855,7 +862,12 @@ class AccessibleMenuNavigator:
         new_group_index = (group_index + direction) % len(group_items)
         self.current_position = group_items[new_group_index]
         
-        # Store this position for the current group
+        # Store this position for the current group and current menu
+        if current_menu not in self.menu_group_positions:
+            self.menu_group_positions[current_menu] = {}
+        self.menu_group_positions[current_menu][self.current_group] = self.current_position
+        
+        # Also store for backward compatibility
         self.group_positions[self.current_group] = new_group_index
         
         # Also store for the current menu (for backward compatibility)
@@ -1149,23 +1161,34 @@ class AccessibleMenuNavigator:
                         self.announce_item(details)
                 return True
         
-        # Save current position in current group
+        # Save current position in current group and menu
         if self.current_group:
-            self.group_positions[self.current_group] = self.current_position
-            
+            if menu_id not in self.menu_group_positions:
+                self.menu_group_positions[menu_id] = {}
+            self.menu_group_positions[menu_id][self.current_group] = self.current_position
+        
         # Set new group
         self.current_group = group
         
-        # Use saved position or default to 0
-        if group in self.group_positions:
-            position = self.group_positions[group]
-            # Check if position is valid for this group
+        # Get the last known position for this group in this menu, if any
+        position = None
+        if menu_id in self.menu_group_positions and group in self.menu_group_positions[menu_id]:
+            position = self.menu_group_positions[menu_id][group]
+            # Verify the position still exists in the items
             if position not in items:
-                position = items[0]
-        else:
-            position = items[0]
+                position = None
         
-        # Set position to first item in group
+        # If no valid saved position, use the first item or fallback to the group_positions dictionary
+        if position is None:
+            if group in self.group_positions:
+                # Use the saved index, but ensure it's within bounds
+                index = min(self.group_positions[group], len(items) - 1)
+                position = items[index]
+            else:
+                # Default to first item
+                position = items[0]
+        
+        # Set position
         self.set_position(position, announce=announce)
         
         return True
@@ -1281,7 +1304,7 @@ class AccessibleMenuNavigator:
         self.speak(f"No other groups with items available")
     
     def check_for_menu_change(self):
-        """Check for menu changes - now mostly handled by background thread"""
+        """Check for menu changes - now handles group positions better"""
         # Just return the result of the last check from the detection thread
         current_time = time.time()
         
@@ -1294,6 +1317,7 @@ class AccessibleMenuNavigator:
             # Process if we have a new menu
             if active_menu and (not self.menu_stack or active_menu != self.menu_stack[0]):
                 self.log(f"Force detected new menu: {active_menu}")
+                old_menu = self.menu_stack[0] if self.menu_stack else None
                 self.menu_stack = [active_menu]
                 
                 # Get the group to reset to if specified
@@ -1303,12 +1327,16 @@ class AccessibleMenuNavigator:
                 valid_group = self.find_valid_group(active_menu, reset_group)
                 self.current_group = valid_group
                 
-                # Use position 0 in the specific group
-                group_items = self.get_group_items(active_menu, valid_group)
-                if group_items:
-                    self.current_position = group_items[0]
+                # Check if we have a saved position for this group in this menu
+                if active_menu in self.menu_group_positions and valid_group in self.menu_group_positions[active_menu]:
+                    self.current_position = self.menu_group_positions[active_menu][valid_group]
                 else:
-                    self.current_position = 0
+                    # Use position 0 in the specific group
+                    group_items = self.get_group_items(active_menu, valid_group)
+                    if group_items:
+                        self.current_position = group_items[0]
+                    else:
+                        self.current_position = 0
                     
                 return True
         
