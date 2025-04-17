@@ -727,6 +727,417 @@ class RegionColorConditionDialog(wx.Dialog):
         })
         return self.condition
 
+class RegionImageConditionDialog(wx.Dialog):
+    """Dialog for creating/editing a region image condition that matches a captured screenshot"""
+    
+    def __init__(self, parent, title="Add Region Image Condition", condition=None):
+        super().__init__(parent, title=title, size=(550, 650))
+        
+        self.condition = condition or {
+            "type": "pixel_region_image",
+            "x1": 0,
+            "y1": 0,
+            "x2": 100,
+            "y2": 100,
+            "confidence": 0.8,
+            "image_data": None  # Will store base64 encoded image data
+        }
+        
+        # Initialize selection variables
+        self.selection_mode = False
+        self.start_pos = None
+        self.current_pos = None
+        self.screenshot = None
+        self.captured_region = None
+        
+        # Get cursor tracker
+        self.cursor_tracker = get_cursor_tracker()
+        
+        self.init_ui()
+        self.Center()
+        
+    def init_ui(self):
+        panel = wx.Panel(self)
+        vbox = wx.BoxSizer(wx.VERTICAL)
+        
+        # Region coordinates group
+        coord_box = wx.StaticBox(panel, label="Region Coordinates")
+        coord_sizer = wx.StaticBoxSizer(coord_box, wx.VERTICAL)
+        
+        # First row: Top-left corner
+        tl_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        tl_label = wx.StaticText(panel, label="Top-left:")
+        
+        x1_label = wx.StaticText(panel, label="X1:")
+        self.x1_ctrl = wx.SpinCtrl(panel, min=0, max=9999, value=str(self.condition["x1"]))
+        
+        y1_label = wx.StaticText(panel, label="Y1:")
+        self.y1_ctrl = wx.SpinCtrl(panel, min=0, max=9999, value=str(self.condition["y1"]))
+        
+        tl_sizer.Add(tl_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=8)
+        tl_sizer.Add(x1_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        tl_sizer.Add(self.x1_ctrl, proportion=1, flag=wx.RIGHT, border=10)
+        tl_sizer.Add(y1_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        tl_sizer.Add(self.y1_ctrl, proportion=1)
+        
+        # Second row: Bottom-right corner
+        br_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        br_label = wx.StaticText(panel, label="Bottom-right:")
+        
+        x2_label = wx.StaticText(panel, label="X2:")
+        self.x2_ctrl = wx.SpinCtrl(panel, min=0, max=9999, value=str(self.condition["x2"]))
+        
+        y2_label = wx.StaticText(panel, label="Y2:")
+        self.y2_ctrl = wx.SpinCtrl(panel, min=0, max=9999, value=str(self.condition["y2"]))
+        
+        br_sizer.Add(br_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=8)
+        br_sizer.Add(x2_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        br_sizer.Add(self.x2_ctrl, proportion=1, flag=wx.RIGHT, border=10)
+        br_sizer.Add(y2_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        br_sizer.Add(self.y2_ctrl, proportion=1)
+        
+        # Select region button
+        self.region_btn = wx.Button(panel, label="Select Region on Screen")
+        self.region_btn.Bind(wx.EVT_BUTTON, self.on_select_region)
+        
+        # Add to coordinate sizer
+        coord_sizer.Add(tl_sizer, flag=wx.EXPAND | wx.ALL, border=5)
+        coord_sizer.Add(br_sizer, flag=wx.EXPAND | wx.ALL, border=5)
+        coord_sizer.Add(self.region_btn, flag=wx.EXPAND | wx.ALL, border=5)
+        
+        # Add to main sizer
+        vbox.Add(coord_sizer, flag=wx.EXPAND | wx.ALL, border=10)
+        
+        # Preview image section (shows selected region)
+        preview_box = wx.StaticBox(panel, label="Region Preview")
+        preview_sizer = wx.StaticBoxSizer(preview_box, wx.VERTICAL)
+        
+        # Add a static bitmap for image preview
+        self.preview_text = wx.StaticText(panel, label="Select a region to see preview")
+        preview_sizer.Add(self.preview_text, flag=wx.EXPAND | wx.ALL, border=5)
+        
+        # Static bitmap to display the captured region
+        self.preview_bitmap = wx.StaticBitmap(panel, size=(320, 240))
+        preview_sizer.Add(self.preview_bitmap, flag=wx.EXPAND | wx.ALL, border=5)
+        
+        # Add to main sizer
+        vbox.Add(preview_sizer, flag=wx.EXPAND | wx.ALL, border=10)
+        
+        # Confidence threshold section
+        confidence_box = wx.StaticBox(panel, label="Match Confidence")
+        confidence_sizer = wx.StaticBoxSizer(confidence_box, wx.VERTICAL)
+        
+        # Confidence slider
+        confidence_label = wx.StaticText(panel, label=f"Confidence Threshold: {self.condition['confidence']:.2f}")
+        self.confidence_slider = wx.Slider(panel, value=int(self.condition["confidence"] * 100),
+                                         minValue=50, maxValue=100,
+                                         style=wx.SL_HORIZONTAL | wx.SL_LABELS)
+        
+        self.confidence_slider.Bind(wx.EVT_SLIDER, self.on_confidence_changed)
+        
+        # Add to confidence section
+        confidence_sizer.Add(confidence_label, flag=wx.EXPAND | wx.ALL, border=5)
+        confidence_sizer.Add(self.confidence_slider, flag=wx.EXPAND | wx.ALL, border=5)
+        
+        # Add confidence section to main sizer
+        vbox.Add(confidence_sizer, flag=wx.EXPAND | wx.ALL, border=10)
+        
+        # Help text
+        help_text = wx.StaticText(panel, label="This condition checks if the captured region image appears on screen with the specified confidence level.")
+        help_text.Wrap(500)  # Wrap text to fit dialog width
+        vbox.Add(help_text, flag=wx.EXPAND | wx.ALL, border=10)
+        
+        # Buttons
+        button_box = wx.BoxSizer(wx.HORIZONTAL)
+        ok_button = wx.Button(panel, wx.ID_OK, "OK")
+        cancel_button = wx.Button(panel, wx.ID_CANCEL, "Cancel")
+        button_box.Add(ok_button)
+        button_box.Add(cancel_button, flag=wx.LEFT, border=5)
+        vbox.Add(button_box, flag=wx.ALIGN_RIGHT | wx.ALL, border=10)
+        
+        panel.SetSizer(vbox)
+        
+        # Bind close event
+        self.Bind(wx.EVT_CLOSE, self.on_close)
+        
+        # Load existing image if present
+        if self.condition.get("image_data"):
+            self.load_preview_from_base64()
+    
+    def on_confidence_changed(self, event):
+        """Update the confidence label when slider is moved"""
+        confidence = self.confidence_slider.GetValue() / 100.0
+        for child in self.GetChildren():
+            if isinstance(child, wx.Panel):
+                for grandchild in child.GetChildren():
+                    if isinstance(grandchild, wx.StaticBox):
+                        for greatgrandchild in grandchild.GetChildren():
+                            if isinstance(greatgrandchild, wx.StaticText) and "Confidence Threshold:" in greatgrandchild.GetLabel():
+                                greatgrandchild.SetLabel(f"Confidence Threshold: {confidence:.2f}")
+                                break
+    
+    def load_preview_from_base64(self):
+        """Load the image preview from base64-encoded data"""
+        import base64
+        import io
+        from PIL import Image
+        
+        try:
+            # Decode the base64 image data
+            image_data = base64.b64decode(self.condition["image_data"])
+            
+            # Create a PIL Image from the decoded data
+            image = Image.open(io.BytesIO(image_data))
+            
+            # Convert PIL Image to wx.Bitmap
+            width, height = image.size
+            wximage = wx.Image(width, height)
+            wximage.SetData(image.convert("RGB").tobytes())
+            bitmap = wx.Bitmap(wximage)
+            
+            # Update the preview bitmap and text
+            self.preview_bitmap.SetBitmap(bitmap)
+            self.preview_text.SetLabel(f"Image: {width}x{height} pixels")
+            self.captured_region = image
+            
+            # Update layout
+            self.Layout()
+        except Exception as e:
+            self.preview_text.SetLabel(f"Error loading image: {str(e)}")
+    
+    def on_close(self, event):
+        """Ensure tracker is stopped when dialog closes"""
+        if self.cursor_tracker.is_active:
+            self.cursor_tracker.stop_tracking()
+        event.Skip()
+    
+    def on_select_region(self, event):
+        """Start the interactive region selection process"""
+        self.Iconize(True)
+        
+        # Start cursor tracker
+        self.cursor_tracker.start_tracking()
+        
+        # Status text in parent's status bar if available
+        try:
+            parent_frame = wx.GetTopLevelParent(self.GetParent())
+            parent_frame.SetStatusText("Click and drag to select a region. Press ESC to cancel")
+        except:
+            pass
+        
+        # IMPORTANT: Call region selection directly instead of in a thread
+        # Use wx.CallAfter to ensure we're still in the main thread
+        wx.CallAfter(self._do_select_region)
+    
+    def _do_select_region(self):
+        """Perform the interactive region selection"""
+        # Create a selection overlay dialog
+        overlay = wx.Dialog(None, title="Region Selector", 
+                          style=wx.STAY_ON_TOP | wx.FRAME_NO_TASKBAR | wx.NO_BORDER)
+        
+        # Make it full screen and transparent
+        overlay.SetTransparent(150)  # Semi-transparent
+        overlay.ShowFullScreen(True)
+        
+        # Take a full screenshot for reference
+        self.screenshot = pyautogui.screenshot()
+        screen_width, screen_height = self.screenshot.size
+        
+        # Create a panel to capture mouse events
+        panel = wx.Panel(overlay)
+        panel.SetSize(screen_width, screen_height)
+        
+        # State variables for the selection
+        selection_start = None
+        is_selecting = False
+        
+        # Create a buffered DC for drawing
+        buffer = wx.Bitmap(screen_width, screen_height)
+        
+        def draw_selection():
+            """Draw the current selection on the overlay"""
+            nonlocal buffer
+            
+            dc = wx.BufferedDC(wx.ClientDC(panel), buffer)
+            dc.Clear()
+            
+            if selection_start and is_selecting:
+                x1, y1 = selection_start
+                x2, y2 = panel.ScreenToClient(wx.GetMousePosition())
+                
+                # Draw rectangle
+                dc.SetPen(wx.Pen(wx.BLUE, 2))
+                dc.SetBrush(wx.Brush(wx.Colour(0, 0, 255, 64)))  # Semi-transparent blue
+                
+                # Calculate rectangle coordinates
+                left = min(x1, x2)
+                top = min(y1, y2)
+                width = abs(x2 - x1)
+                height = abs(y2 - y1)
+                
+                dc.DrawRectangle(left, top, width, height)
+                
+                # Draw dimensions text
+                text = f"{width}x{height} px"
+                dc.SetTextForeground(wx.WHITE)
+                dc.DrawText(text, left + 5, top + 5)
+        
+        def on_paint(evt):
+            """Handle paint events"""
+            wx.BufferedPaintDC(panel, buffer)
+        
+        def on_mouse_down(evt):
+            """Handle mouse down events"""
+            nonlocal selection_start, is_selecting
+            selection_start = evt.GetPosition()
+            is_selecting = True
+            draw_selection()
+        
+        def on_mouse_move(evt):
+            """Handle mouse move events"""
+            if is_selecting:
+                draw_selection()
+        
+        def on_mouse_up(evt):
+            """Handle mouse up events"""
+            nonlocal is_selecting
+            
+            if not is_selecting:
+                return
+                
+            is_selecting = False
+            
+            # Get the selection
+            x1, y1 = selection_start
+            x2, y2 = evt.GetPosition()
+            
+            # Ensure x1,y1 is top-left and x2,y2 is bottom-right
+            if x1 > x2:
+                x1, x2 = x2, x1
+            if y1 > y2:
+                y1, y2 = y2, y1
+            
+            # Close the overlay
+            overlay.Close()
+            
+            # Process the selection (in the main thread already)
+            self.process_selection(x1, y1, x2, y2)
+        
+        def on_key_down(evt):
+            """Handle key down events"""
+            if evt.GetKeyCode() == wx.WXK_ESCAPE:
+                overlay.Close()
+                self.on_selection_canceled()
+        
+        # Bind events
+        panel.Bind(wx.EVT_PAINT, on_paint)
+        panel.Bind(wx.EVT_LEFT_DOWN, on_mouse_down)
+        panel.Bind(wx.EVT_MOTION, on_mouse_move)
+        panel.Bind(wx.EVT_LEFT_UP, on_mouse_up)
+        panel.Bind(wx.EVT_KEY_DOWN, on_key_down)
+        
+        # Initialize the buffer
+        dc = wx.BufferedDC(None, buffer)
+        dc.Clear()
+        
+        # Show instructions
+        info_text = "Click and drag to select a region. Press ESC to cancel."
+        font = wx.Font(14, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
+        dc.SetFont(font)
+        dc.SetTextForeground(wx.WHITE)
+        text_width, text_height = dc.GetTextExtent(info_text)
+        dc.DrawText(info_text, (screen_width - text_width) // 2, 30)
+        
+        # Show the overlay (this blocks until the overlay is closed)
+        overlay.ShowModal()
+    
+    def on_selection_canceled(self):
+        """Handle cancellation of region selection"""
+        # Stop the cursor tracker
+        self.cursor_tracker.stop_tracking()
+        
+        # Restore main window
+        self.Iconize(False)
+        self.Raise()
+        
+        # Reset status text
+        try:
+            parent_frame = wx.GetTopLevelParent(self.GetParent())
+            parent_frame.SetStatusText("")
+        except:
+            pass
+    
+    def process_selection(self, x1, y1, x2, y2):
+        """Process the selected region and capture the image"""
+        # Update controls
+        self.x1_ctrl.SetValue(x1)
+        self.y1_ctrl.SetValue(y1)
+        self.x2_ctrl.SetValue(x2)
+        self.y2_ctrl.SetValue(y2)
+        
+        try:
+            # Crop the region from our screenshot
+            region = self.screenshot.crop((x1, y1, x2, y2))
+            self.captured_region = region
+            
+            # Convert PIL Image to wx.Bitmap for preview
+            width, height = region.size
+            wximage = wx.Image(width, height)
+            wximage.SetData(region.convert("RGB").tobytes())
+            bitmap = wx.Bitmap(wximage)
+            
+            # Update preview
+            self.preview_bitmap.SetBitmap(bitmap)
+            self.preview_text.SetLabel(f"Image: {width}x{height} pixels")
+            
+            # Update layout
+            self.Layout()
+            
+        except Exception as e:
+            self.preview_text.SetLabel(f"Error capturing region: {str(e)}")
+        
+        # Stop the cursor tracker
+        self.cursor_tracker.stop_tracking()
+        
+        # Restore main window
+        self.Iconize(False)
+        self.Raise()
+        
+        # Reset status text
+        try:
+            parent_frame = wx.GetTopLevelParent(self.GetParent())
+            parent_frame.SetStatusText("")
+        except:
+            pass
+    
+    def get_condition(self):
+        """Get the condition data from the dialog"""
+        import base64
+        import io
+        
+        # Update coordinate values
+        self.condition.update({
+            "x1": self.x1_ctrl.GetValue(),
+            "y1": self.y1_ctrl.GetValue(),
+            "x2": self.x2_ctrl.GetValue(),
+            "y2": self.y2_ctrl.GetValue(),
+            "confidence": self.confidence_slider.GetValue() / 100.0,
+        })
+        
+        # If we have a captured image, save it as base64
+        if self.captured_region:
+            # Save image to bytes buffer
+            buffer = io.BytesIO()
+            self.captured_region.save(buffer, format="PNG")
+            
+            # Convert to base64
+            image_base64 = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            
+            # Store in condition
+            self.condition["image_data"] = image_base64
+        
+        return self.condition
+
 
 class OCRRegionDialog(wx.Dialog):
     """Dialog for creating/editing an OCR region"""
@@ -1049,7 +1460,7 @@ class UIElementDialog(wx.Dialog):
     
     def __init__(self, parent, title="Add UI Element", element=None):
         # Increased height to ensure all sections are visible
-        super().__init__(parent, title=title, size=(550, 750))
+        super().__init__(parent, title=title, size=(550, 850))  # Increased height for conditions
         
         # Default values if no element is provided
         self.element = element or [
@@ -1060,15 +1471,21 @@ class UIElementDialog(wx.Dialog):
             None,              # submenu_id
             "default",         # group
             [],                # ocr_regions
-            None               # custom_announcement
+            None,              # custom_announcement
+            0,                 # index (new)
+            []                 # conditions (new)
         ]
         
         # Ensure the element has all fields
-        while len(self.element) < 8:
+        while len(self.element) < 10:
             if len(self.element) == 6:  # Add OCR regions
                 self.element.append([])
             elif len(self.element) == 7:  # Add custom announcement
                 self.element.append(None)
+            elif len(self.element) == 8:  # Add index
+                self.element.append(0)
+            elif len(self.element) == 9:  # Add conditions
+                self.element.append([])
             else:  # Add any missing fields (for backward compatibility)
                 self.element.append(None)
         
@@ -1222,6 +1639,71 @@ class UIElementDialog(wx.Dialog):
         ocr_sizer.Add(ocr_btn_sizer, flag=wx.EXPAND | wx.ALL, border=5)
         
         vbox.Add(ocr_sizer, flag=wx.EXPAND | wx.ALL, border=10)
+
+        # Element Index
+        index_box = wx.BoxSizer(wx.HORIZONTAL)
+        index_label = wx.StaticText(panel, label="Display Index:")
+        self.index_ctrl = wx.SpinCtrl(panel, min=0, max=999, value=str(self.element[8]))
+        index_help = wx.StaticText(panel, label="(Determines order in group)")
+        
+        index_box.Add(index_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=8)
+        index_box.Add(self.index_ctrl, proportion=1, flag=wx.RIGHT, border=8)
+        index_box.Add(index_help, flag=wx.ALIGN_CENTER_VERTICAL)
+        
+        vbox.Add(index_box, flag=wx.EXPAND | wx.ALL, border=10)
+        
+        # Element Conditions section
+        condition_box = wx.StaticBox(panel, label="Element Conditions")
+        condition_sizer = wx.StaticBoxSizer(condition_box, wx.VERTICAL)
+        
+        # Enable conditions checkbox
+        self.has_conditions_cb = wx.CheckBox(panel, label="This element has its own activation conditions")
+        self.has_conditions_cb.SetValue(len(self.element) > 9 and len(self.element[9]) > 0)
+        self.has_conditions_cb.Bind(wx.EVT_CHECKBOX, self.on_has_conditions_toggled)
+        condition_sizer.Add(self.has_conditions_cb, flag=wx.EXPAND | wx.ALL, border=5)
+        
+        # Conditions list
+        self.conditions_list = wx.ListCtrl(panel, style=wx.LC_REPORT, size=(-1, 150))
+        self.conditions_list.InsertColumn(0, "Type", width=150)
+        self.conditions_list.InsertColumn(1, "Details", width=350)
+        self.conditions_list.Enable(self.has_conditions_cb.GetValue())
+        condition_sizer.Add(self.conditions_list, flag=wx.EXPAND | wx.ALL, border=5)
+        
+        # Populate conditions list
+        self.update_conditions_list()
+        
+        # Condition Buttons
+        condition_btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        
+        self.add_pixel_condition_btn = wx.Button(panel, label="Add Pixel Color")
+        self.add_pixel_condition_btn.Bind(wx.EVT_BUTTON, self.on_add_pixel_condition)
+        self.add_pixel_condition_btn.Enable(self.has_conditions_cb.GetValue())
+        
+        self.add_region_condition_btn = wx.Button(panel, label="Add Region Color")
+        self.add_region_condition_btn.Bind(wx.EVT_BUTTON, self.on_add_region_condition)
+        self.add_region_condition_btn.Enable(self.has_conditions_cb.GetValue())
+        
+        self.add_image_condition_btn = wx.Button(panel, label="Add Region Image")
+        self.add_image_condition_btn.Bind(wx.EVT_BUTTON, self.on_add_region_image_condition)
+        self.add_image_condition_btn.Enable(self.has_conditions_cb.GetValue())
+        
+        self.delete_condition_btn = wx.Button(panel, label="Delete")
+        self.delete_condition_btn.Bind(wx.EVT_BUTTON, self.on_delete_condition)
+        self.delete_condition_btn.Enable(self.has_conditions_cb.GetValue())
+        
+        condition_btn_sizer.Add(self.add_pixel_condition_btn, flag=wx.RIGHT, border=5)
+        condition_btn_sizer.Add(self.add_region_condition_btn, flag=wx.RIGHT, border=5)
+        condition_btn_sizer.Add(self.add_image_condition_btn, flag=wx.RIGHT, border=5)
+        condition_btn_sizer.Add(self.delete_condition_btn)
+        
+        condition_sizer.Add(condition_btn_sizer, flag=wx.EXPAND | wx.ALL, border=5)
+        
+        # Help text for conditions
+        help_text = wx.StaticText(panel, label="Element conditions are checked only when the parent menu is active.")
+        help_text.Wrap(500)
+        condition_sizer.Add(help_text, flag=wx.EXPAND | wx.ALL, border=5)
+        
+        vbox.Add(condition_sizer, flag=wx.EXPAND | wx.ALL, border=10)
         
         # Custom Announcement section - making it more visible
         announce_box = wx.StaticBox(panel, label="Custom Announcement")
@@ -1483,6 +1965,14 @@ class UIElementDialog(wx.Dialog):
         if self.custom_announce_cb.GetValue():
             announcement = self.template_ctrl.GetValue()
             
+        # Get index
+        index = self.index_ctrl.GetValue()
+        
+        # Get conditions (only if enabled)
+        conditions = []
+        if self.has_conditions_cb.GetValue() and len(self.element) > 9:
+            conditions = self.element[9]
+            
         return [
             (self.x_ctrl.GetValue(), self.y_ctrl.GetValue()),
             self.name_ctrl.GetValue(),
@@ -1491,5 +1981,108 @@ class UIElementDialog(wx.Dialog):
             submenu_id,
             group,
             ocr_regions,
-            announcement
+            announcement,
+            index,
+            conditions
         ]
+
+    def on_has_conditions_toggled(self, event):
+        """Handle toggling the conditions checkbox"""
+        enabled = event.IsChecked()
+        self.conditions_list.Enable(enabled)
+        self.add_pixel_condition_btn.Enable(enabled)
+        self.add_region_condition_btn.Enable(enabled)
+        self.add_image_condition_btn.Enable(enabled)
+        self.delete_condition_btn.Enable(enabled)
+        
+        # If disabling, clear all conditions
+        if not enabled and len(self.element) > 9:
+            self.element[9] = []
+            self.update_conditions_list()
+    
+    def update_conditions_list(self):
+        """Update the conditions list with current data"""
+        self.conditions_list.DeleteAllItems()
+        
+        if len(self.element) <= 9 or not self.element[9]:
+            return
+            
+        for i, condition in enumerate(self.element[9]):
+            condition_type = condition.get("type", "unknown")
+            
+            if condition_type == "pixel_color":
+                details = f"({condition['x']}, {condition['y']}) = RGB{condition['color']} +/-{condition['tolerance']}"
+            elif condition_type == "pixel_region_color":
+                details = f"Region ({condition['x1']}, {condition['y1']}) to ({condition['x2']}, {condition['y2']}), " \
+                          f"RGB{condition['color']} +/-{condition['tolerance']}, thresh={condition['threshold']}"
+            elif condition_type == "pixel_region_image":
+                details = f"Region ({condition['x1']}, {condition['y1']}) to ({condition['x2']}, {condition['y2']}), " \
+                          f"confidence={condition['confidence']:.2f}, has_image={'Yes' if condition.get('image_data') else 'No'}"
+            else:
+                details = str(condition)
+            
+            idx = self.conditions_list.InsertItem(i, condition_type)
+            self.conditions_list.SetItem(idx, 1, details)
+    
+    def on_add_pixel_condition(self, event):
+        """Add a new pixel color condition"""
+        dialog = PixelColorConditionDialog(self)
+        if dialog.ShowModal() == wx.ID_OK:
+            condition = dialog.get_condition()
+            
+            # Ensure element has conditions list
+            if len(self.element) <= 9:
+                self.element.append([])
+                
+            # Add the condition
+            self.element[9].append(condition)
+            self.update_conditions_list()
+            
+        dialog.Destroy()
+    
+    def on_add_region_condition(self, event):
+        """Add a new region color condition"""
+        dialog = RegionColorConditionDialog(self)
+        if dialog.ShowModal() == wx.ID_OK:
+            condition = dialog.get_condition()
+            
+            # Ensure element has conditions list
+            if len(self.element) <= 9:
+                self.element.append([])
+                
+            # Add the condition
+            self.element[9].append(condition)
+            self.update_conditions_list()
+            
+        dialog.Destroy()
+    
+    def on_add_region_image_condition(self, event):
+        """Add a new region image condition"""
+        dialog = RegionImageConditionDialog(self)
+        if dialog.ShowModal() == wx.ID_OK:
+            condition = dialog.get_condition()
+            
+            # Ensure element has conditions list
+            if len(self.element) <= 9:
+                self.element.append([])
+                
+            # Add the condition
+            self.element[9].append(condition)
+            self.update_conditions_list()
+            
+        dialog.Destroy()
+    
+    def on_delete_condition(self, event):
+        """Delete the selected condition"""
+        selected_idx = self.conditions_list.GetFirstSelected()
+        if selected_idx == -1:
+            return
+            
+        # Confirm deletion
+        if wx.MessageBox("Are you sure you want to delete this condition?", 
+                        "Confirm Delete", wx.YES_NO | wx.ICON_QUESTION) != wx.YES:
+            return
+            
+        # Delete the condition
+        del self.element[9][selected_idx]
+        self.update_conditions_list()

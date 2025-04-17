@@ -11,6 +11,7 @@ import json
 import os
 import sys
 import logging
+import pyautogui
 import time
 import numpy as np
 import cv2
@@ -595,7 +596,7 @@ class AccessibleMenuNavigator:
                         self.get_menu_groups(active_menu)
                     
                     # Get the group to reset to if specified
-                    reset_group = self.menus[active_menu].get("reset_group", "default")
+                    reset_group = self.menus[active_menu].get("reset_group", None)
                     
                     # Reset position only if needed, otherwise maintain existing position
                     if should_reset_index:
@@ -670,29 +671,33 @@ class AccessibleMenuNavigator:
                 time.sleep(0.1)  # Longer pause on error
 
     
-    def find_valid_group(self, menu_id, preferred_group="default"):
+    def find_valid_group(self, menu_id, preferred_group=None):
         """Find a group that contains at least one element, preferring the specified group"""
         if menu_id not in self.menus:
-            return "default"
+            # Get the first group if available, otherwise use empty string
+            all_groups = self.get_menu_groups(menu_id)
+            return all_groups[0] if all_groups else ""
             
         # Get all groups in this menu
         all_groups = self.get_menu_groups(menu_id)
+        if not all_groups:
+            return ""  # Return empty string if no groups exist
         
-        # First try the preferred group
-        if preferred_group in all_groups:
+        # If preferred_group is specified, try it first
+        if preferred_group and preferred_group in all_groups:
             items = self.get_group_items(menu_id, preferred_group)
             if items:
                 return preferred_group
-                
-        # If preferred group is empty or not found, try each group in order
+        
+        # If preferred group is empty, not found, or not specified, try each group in order
         for group in all_groups:
             items = self.get_group_items(menu_id, group)
             if items:
                 return group
                 
-        # If no group has items, return the preferred one anyway
-        return preferred_group
-    
+        # If no group has items, return the first group
+        return all_groups[0]
+
     def _set_cursor_position(self, x, y):
         """Ultra-fast cursor positioning using ctypes"""
         ctypes.windll.user32.SetCursorPos(int(x), int(y))
@@ -801,6 +806,23 @@ class AccessibleMenuNavigator:
             results[tag] = text
         
         return results
+
+    def check_element_conditions(self, element, screenshot=None):
+        """Check if an UI element's conditions are met"""
+        # If element has no conditions, it's always active
+        if len(element) <= 9 or not element[9]:
+            return True
+            
+        # Take a screenshot if not provided
+        if screenshot is None:
+            screenshot = np.array(pyautogui.screenshot())
+            
+        # Check each condition - all must be met for the element to be active
+        for condition in element[9]:
+            if not self.condition_checker._check_condition_optimized(condition, screenshot):
+                return False
+                
+        return True
     
     def _perform_navigation(self, direction):
         """Perform navigation in the given direction"""
@@ -938,7 +960,7 @@ class AccessibleMenuNavigator:
         return True
     
     def get_current_menu_items(self):
-        """Get items from current menu with minimal overhead"""
+        """Get items from current menu with minimal overhead, filtering by active conditions"""
         if not self.menu_stack:
             # If menu_stack is empty, use the first menu as default
             if self.menus:
@@ -957,7 +979,24 @@ class AccessibleMenuNavigator:
                 return []  # No menus available
         
         menu_data = self.menus[menu_id]
-        return menu_data.get("items", [])
+        all_items = menu_data.get("items", [])
+        
+        # Check if we need to filter items based on conditions
+        has_conditional_items = any(len(item) > 9 and item[9] for item in all_items)
+        
+        if not has_conditional_items:
+            return all_items  # No filtering needed
+            
+        # Take a screenshot for condition checking
+        screenshot = np.array(pyautogui.screenshot())
+        
+        # Filter items based on their conditions
+        active_items = []
+        for item in all_items:
+            if self.check_element_conditions(item, screenshot):
+                active_items.append(item)
+                
+        return active_items
     
     @lru_cache(maxsize=128)
     def get_item_details(self, menu_id, position):
@@ -1089,7 +1128,7 @@ class AccessibleMenuNavigator:
     def get_menu_groups(self, menu_id):
         """Get all unique groups in a menu"""
         if menu_id not in self.menus:
-            return ["default"]
+            return []  # Return empty list instead of ["default"]
             
         # Check if we already have the groups cached
         if menu_id in self.menu_groups:
@@ -1100,16 +1139,12 @@ class AccessibleMenuNavigator:
         items = self.menus[menu_id].get("items", [])
         
         for item in items:
-            # Add group (with default fallback if not present)
+            # Add group (with empty string fallback if not present)
             if len(item) > 5 and item[5]:
                 groups.add(item[5])
             else:
-                groups.add("default")
+                groups.add("")  # Use empty string instead of "default"
         
-        # Always include default group
-        if not groups:
-            groups.add("default")
-            
         # Sort groups for consistent navigation
         sorted_groups = sorted(list(groups))
         
@@ -1226,7 +1261,7 @@ class AccessibleMenuNavigator:
         return True
     
     def get_group_items(self, menu_id, group):
-        """Get indices of items in a specific group"""
+        """Get indices of items in a specific group, considering element conditions"""
         if menu_id not in self.menus:
             self.log(f"Menu '{menu_id}' not found when looking for group '{group}' items", logging.WARNING)
             return []
@@ -1236,21 +1271,79 @@ class AccessibleMenuNavigator:
             self.log(f"Menu '{menu_id}' has no items when looking for group '{group}'", logging.WARNING)
             return []
             
-        group_indices = []
+        # Check if we need to filter items based on conditions
+        has_conditional_items = any(len(item) > 9 and item[9] for item in items)
         
+        if not has_conditional_items:
+            # No filtering needed, just return items in the group
+            group_indices = []
+            for i, item in enumerate(items):
+                item_group = "default"
+                if len(item) > 5 and item[5]:
+                    item_group = item[5]
+                    
+                if item_group == group:
+                    group_indices.append(i)
+                    
+            return sorted(group_indices, key=lambda idx: items[idx][8] if len(items[idx]) > 8 else 0)
+        
+        # Take a screenshot for condition checking
+        screenshot = np.array(pyautogui.screenshot())
+        
+        # Filter items based on their conditions and group
+        group_indices = []
         for i, item in enumerate(items):
             item_group = "default"
             if len(item) > 5 and item[5]:
                 item_group = item[5]
                 
-            if item_group == group:
+            if item_group == group and self.check_element_conditions(item, screenshot):
                 group_indices.append(i)
-        
-        if not group_indices:
-            self.log(f"No items in group '{group}' for menu '{menu_id}'", logging.WARNING)
+                
+        # Sort by index field if available
+        return sorted(group_indices, key=lambda idx: items[idx][8] if len(items[idx]) > 8 else 0)
+
+    def get_menu_groups(self, menu_id):
+        """Get all unique groups in a menu, sorted by their lowest element index"""
+        if menu_id not in self.menus:
+            return ["default"]
             
-        return group_indices
-    
+        # Check if we already have the groups cached
+        if menu_id in self.menu_groups:
+            return self.menu_groups[menu_id]
+        
+        # Find all unique groups in the menu and track their lowest element index
+        groups = {}  # Dict mapping group name to lowest index
+        items = self.menus[menu_id].get("items", [])
+        
+        for item in items:
+            # Check if item is active based on conditions
+            if len(item) > 9 and item[9] and not self.check_element_conditions(item):
+                continue  # Skip inactive items
+                
+            # Get item group and index
+            if len(item) > 5 and item[5]:
+                group_name = item[5]
+            else:
+                group_name = "default"
+                
+            index = item[8] if len(item) > 8 else 0
+            
+            # Update group with lowest index
+            if group_name not in groups or index < groups[group_name]:
+                groups[group_name] = index
+        
+        # Always include default group
+        if not groups:
+            groups["default"] = 0
+            
+        # Sort groups by their lowest element index
+        sorted_groups = sorted(groups.keys(), key=lambda g: groups[g])
+        
+        # Cache the result
+        self.menu_groups[menu_id] = sorted_groups
+        
+        return sorted_groups
     
     def navigate_to_next_group(self):
         """Navigate to the next group with items"""
@@ -1356,7 +1449,7 @@ class AccessibleMenuNavigator:
                 self.menu_stack = [active_menu]
                 
                 # Get the group to reset to if specified
-                reset_group = self.menus[active_menu].get("reset_group", "default")
+                reset_group = self.menus[active_menu].get("reset_group", None)
                 
                 # Find a valid group (with items)
                 valid_group = self.find_valid_group(active_menu, reset_group)

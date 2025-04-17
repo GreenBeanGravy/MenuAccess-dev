@@ -11,21 +11,26 @@ from pflib.bulk_edit_dialog import BulkEditElementsDialog
 from pflib.condition_bulk_edit import BulkEditConditionsDialog
 
 class GroupManagerDialog(wx.Dialog):
-    """Dialog for managing element groups in a menu"""
+    """Dialog for managing element groups in a menu, with ordering support"""
     
     def __init__(self, parent, menu_data):
-        super().__init__(parent, title="Group Manager", size=(400, 400))
+        super().__init__(parent, title="Group Manager", size=(500, 500))
         
         self.menu_data = menu_data
         # Store parent for immediate refresh
         self.menu_panel = parent
         
-        # Collect all existing groups
-        self.groups = set(["default"])
+        # Collect all existing groups and their lowest element index
+        self.groups = {"default": 0}  # Default group always starts with index 0
         if "items" in self.menu_data:
             for item in self.menu_data["items"]:
                 if len(item) > 5 and item[5]:
-                    self.groups.add(item[5])
+                    group_name = item[5]
+                    group_index = item[8] if len(item) > 8 else 0
+                    
+                    # Track the lowest index for each group
+                    if group_name not in self.groups or group_index < self.groups[group_name]:
+                        self.groups[group_name] = group_index
         
         self.init_ui()
         self.Center()
@@ -39,10 +44,23 @@ class GroupManagerDialog(wx.Dialog):
         main_sizer.Add(instructions, flag=wx.ALL | wx.EXPAND, border=10)
         
         # Group list
-        list_label = wx.StaticText(panel, label="Groups:")
+        list_label = wx.StaticText(panel, label="Groups (drag to reorder):")
         main_sizer.Add(list_label, flag=wx.LEFT | wx.RIGHT | wx.TOP, border=10)
         
-        self.group_list = wx.ListBox(panel, choices=sorted(list(self.groups)), size=(-1, 200))
+        # Use a ListCtrl instead of ListBox to support drag and drop and showing indices
+        self.group_list = wx.ListCtrl(panel, style=wx.LC_REPORT | wx.LC_SINGLE_SEL, size=(-1, 250))
+        self.group_list.InsertColumn(0, "Group Name", width=250)
+        self.group_list.InsertColumn(1, "Index", width=60)
+        self.group_list.InsertColumn(2, "Elements", width=70)
+        
+        # Populate the list with groups sorted by their index
+        sorted_groups = sorted(self.groups.items(), key=lambda x: x[1])
+        for i, (group_name, group_index) in enumerate(sorted_groups):
+            idx = self.group_list.InsertItem(i, group_name)
+            self.group_list.SetItem(idx, 1, str(group_index))
+            element_count = self.count_elements_in_group(group_name)
+            self.group_list.SetItem(idx, 2, str(element_count))
+            
         main_sizer.Add(self.group_list, proportion=1, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
         
         # Group actions
@@ -51,20 +69,41 @@ class GroupManagerDialog(wx.Dialog):
         self.add_btn = wx.Button(panel, label="Add Group")
         self.rename_btn = wx.Button(panel, label="Rename Group")
         self.delete_btn = wx.Button(panel, label="Delete Group")
+        self.move_up_btn = wx.Button(panel, label="Move Up")
+        self.move_down_btn = wx.Button(panel, label="Move Down")
         
         self.add_btn.Bind(wx.EVT_BUTTON, self.on_add_group)
         self.rename_btn.Bind(wx.EVT_BUTTON, self.on_rename_group)
         self.delete_btn.Bind(wx.EVT_BUTTON, self.on_delete_group)
+        self.move_up_btn.Bind(wx.EVT_BUTTON, self.on_move_up)
+        self.move_down_btn.Bind(wx.EVT_BUTTON, self.on_move_down)
         
         btn_sizer.Add(self.add_btn, flag=wx.RIGHT, border=5)
         btn_sizer.Add(self.rename_btn, flag=wx.RIGHT, border=5)
-        btn_sizer.Add(self.delete_btn)
+        btn_sizer.Add(self.delete_btn, flag=wx.RIGHT, border=5)
+        btn_sizer.Add(self.move_up_btn, flag=wx.RIGHT, border=5)
+        btn_sizer.Add(self.move_down_btn)
         
         main_sizer.Add(btn_sizer, flag=wx.ALL | wx.ALIGN_CENTER, border=10)
         
-        # Element count per group
-        self.count_text = wx.StaticText(panel, label="")
-        main_sizer.Add(self.count_text, flag=wx.ALL | wx.EXPAND, border=10)
+        # Manual reordering section
+        index_box = wx.StaticBox(panel, label="Manual Group Index")
+        index_sizer = wx.StaticBoxSizer(index_box, wx.VERTICAL)
+        
+        index_help = wx.StaticText(panel, label="Set custom index for the selected group:")
+        index_sizer.Add(index_help, flag=wx.ALL, border=5)
+        
+        index_ctrl_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        self.index_spinner = wx.SpinCtrl(panel, min=0, max=999, value="0")
+        set_index_btn = wx.Button(panel, label="Set Index")
+        set_index_btn.Bind(wx.EVT_BUTTON, self.on_set_index)
+        
+        index_ctrl_sizer.Add(self.index_spinner, flag=wx.RIGHT, border=10)
+        index_ctrl_sizer.Add(set_index_btn)
+        
+        index_sizer.Add(index_ctrl_sizer, flag=wx.ALL, border=5)
+        
+        main_sizer.Add(index_sizer, flag=wx.EXPAND | wx.ALL, border=10)
         
         # OK/Cancel buttons
         btn_sizer = wx.StdDialogButtonSizer()
@@ -78,33 +117,45 @@ class GroupManagerDialog(wx.Dialog):
         
         panel.SetSizer(main_sizer)
         
+        # Set up drag and drop events for the list
+        self.group_list.Bind(wx.EVT_LIST_BEGIN_DRAG, self.on_begin_drag)
+        self.group_list.Bind(wx.EVT_MOTION, self.on_motion)
+        self.group_list.Bind(wx.EVT_LEFT_UP, self.on_left_up)
+        self.group_list.Bind(wx.EVT_LEAVE_WINDOW, self.on_leave_window)
+        
+        # Initialize drag variables
+        self.drag_item = None
+        self.drag_image = None
+        self.drop_target = None
+        
         # Update button states
         self.update_ui()
         
-        # Bind list selection event
-        self.group_list.Bind(wx.EVT_LISTBOX, self.on_group_selected)
+        # Bind selection event
+        self.group_list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.on_group_selected)
         
     def on_group_selected(self, event):
         """Handle group selection"""
         self.update_ui()
+        
+        # Update index spinner with current group's index
+        item = self.group_list.GetFirstSelected()
+        if item != -1:
+            group_name = self.group_list.GetItemText(item, 0)
+            index = int(self.group_list.GetItemText(item, 1))
+            self.index_spinner.SetValue(index)
     
     def update_ui(self):
         """Update UI based on current state"""
-        selection = self.group_list.GetSelection()
-        has_selection = selection != wx.NOT_FOUND
+        selection = self.group_list.GetFirstSelected()
+        has_selection = selection != -1
         
         # Update buttons
         self.rename_btn.Enable(has_selection)
-        self.delete_btn.Enable(has_selection and self.group_list.GetString(selection) != "default")
+        self.delete_btn.Enable(has_selection and self.group_list.GetItemText(selection, 0) != "default")
+        self.move_up_btn.Enable(has_selection and selection > 0)
+        self.move_down_btn.Enable(has_selection and selection < self.group_list.GetItemCount() - 1)
         
-        # Update element count text
-        if has_selection:
-            group_name = self.group_list.GetString(selection)
-            count = self.count_elements_in_group(group_name)
-            self.count_text.SetLabel(f"Elements in group '{group_name}': {count}")
-        else:
-            self.count_text.SetLabel("")
-    
     def count_elements_in_group(self, group_name):
         """Count how many elements are in a specific group"""
         count = 0
@@ -115,6 +166,124 @@ class GroupManagerDialog(wx.Dialog):
                     count += 1
         return count
     
+    def on_begin_drag(self, event):
+        """Begin dragging a group item"""
+        item = event.GetIndex()
+        group_name = self.group_list.GetItemText(item, 0)
+        
+        # Don't allow dragging the default group
+        if group_name == "default":
+            return
+            
+        self.drag_item = item
+        
+        # Create drag image for visual feedback
+        self.drag_image = wx.DragImage(group_name, wx.Icon("", wx.BITMAP_TYPE_ICO))
+        self.drag_image.BeginDrag(wx.Point(0, 0), self.group_list, fullScreen=True)
+        self.drag_image.Show()
+        
+    def on_motion(self, event):
+        """Handle motion during drag operation"""
+        if self.drag_item is not None:
+            self.drag_image.Move(wx.GetMousePosition())
+            
+            # Determine drop target
+            position = self.group_list.ScreenToClient(wx.GetMousePosition())
+            item, flags = self.group_list.HitTest(position)
+            
+            # Update drop target indicator
+            if item != -1 and item != self.drag_item:
+                self.drop_target = item
+                
+                # Clear any previous selection
+                for i in range(self.group_list.GetItemCount()):
+                    self.group_list.SetItemBackgroundColour(i, self.group_list.GetBackgroundColour())
+                    
+                # Highlight drop target
+                self.group_list.SetItemBackgroundColour(item, wx.Colour(200, 200, 255))
+            elif item == -1 or item == self.drag_item:
+                self.drop_target = None
+                # Clear all highlighting
+                for i in range(self.group_list.GetItemCount()):
+                    self.group_list.SetItemBackgroundColour(i, self.group_list.GetBackgroundColour())
+    
+    def on_left_up(self, event):
+        """Handle the end of a drag operation"""
+        if self.drag_item is not None:
+            # End drag
+            self.drag_image.EndDrag()
+            self.drag_image = None
+            
+            # Process drop
+            if self.drop_target is not None:
+                self.move_group(self.drag_item, self.drop_target)
+            
+            # Reset state
+            self.drag_item = None
+            self.drop_target = None
+            
+            # Clear all highlighting
+            for i in range(self.group_list.GetItemCount()):
+                self.group_list.SetItemBackgroundColour(i, self.group_list.GetBackgroundColour())
+                
+            self.update_ui()
+    
+    def on_leave_window(self, event):
+        """Handle the case where mouse leaves the window during drag"""
+        if self.drag_item is not None:
+            # End drag
+            self.drag_image.EndDrag()
+            self.drag_image = None
+            
+            # Reset state
+            self.drag_item = None
+            self.drop_target = None
+            
+            # Clear all highlighting
+            for i in range(self.group_list.GetItemCount()):
+                self.group_list.SetItemBackgroundColour(i, self.group_list.GetBackgroundColour())
+                
+            self.update_ui()
+            
+    def move_group(self, src_idx, dst_idx):
+        """Move a group in the order list by changing its index"""
+        # Don't allow moving the default group
+        src_name = self.group_list.GetItemText(src_idx, 0)
+        if src_name == "default":
+            return
+            
+        # Get the target group's index
+        dst_name = self.group_list.GetItemText(dst_idx, 0) 
+        dst_index = int(self.group_list.GetItemText(dst_idx, 1))
+        
+        # Calculate a new index for the source group
+        if src_idx < dst_idx:
+            # Moving down - place after target
+            new_index = dst_index + 5
+        else:
+            # Moving up - place before target
+            new_index = max(0, dst_index - 5)
+            
+        # Update our tracking dictionary
+        self.groups[src_name] = new_index
+        
+        # Update all elements in this group to the new index
+        for item in self.menu_data["items"]:
+            item_group = item[5] if len(item) > 5 else "default"
+            if item_group == src_name:
+                # Ensure item has index field
+                while len(item) < 9:
+                    item.append(0)
+                    
+                # Update group's base index
+                item[8] += new_index
+        
+        # Re-sort and update the listctrl
+        self.update_group_list()
+        
+        # Set return code to indicate changes were made
+        self.SetReturnCode(wx.ID_OK)
+            
     def on_add_group(self, event):
         """Add a new group"""
         dialog = wx.TextEntryDialog(self, "Enter new group name:", "Add Group")
@@ -124,10 +293,18 @@ class GroupManagerDialog(wx.Dialog):
                 if group_name in self.groups:
                     wx.MessageBox(f"Group '{group_name}' already exists", "Duplicate Group", wx.ICON_ERROR)
                 else:
-                    self.groups.add(group_name)
-                    self.group_list.Set(sorted(list(self.groups)))
+                    # Find the highest index and add 10
+                    highest_index = max(self.groups.values() if self.groups else [0])
+                    self.groups[group_name] = highest_index + 10
+                    
+                    self.update_group_list()
+                    
                     # Select the new group
-                    self.group_list.SetSelection(self.group_list.FindString(group_name))
+                    for i in range(self.group_list.GetItemCount()):
+                        if self.group_list.GetItemText(i, 0) == group_name:
+                            self.group_list.Select(i)
+                            break
+                            
                     self.update_ui()
                     
                     # Set return code and trigger immediate refresh in parent
@@ -139,11 +316,11 @@ class GroupManagerDialog(wx.Dialog):
     
     def on_rename_group(self, event):
         """Rename the selected group"""
-        selection = self.group_list.GetSelection()
-        if selection == wx.NOT_FOUND:
+        selection = self.group_list.GetFirstSelected()
+        if selection == -1:
             return
             
-        old_name = self.group_list.GetString(selection)
+        old_name = self.group_list.GetItemText(selection, 0)
         if old_name == "default":
             wx.MessageBox("Cannot rename the 'default' group", "Error", wx.ICON_ERROR)
             return
@@ -156,17 +333,22 @@ class GroupManagerDialog(wx.Dialog):
                     wx.MessageBox(f"Group '{new_name}' already exists", "Duplicate Group", wx.ICON_ERROR)
                 else:
                     # Update all elements with this group
-                    if "items" in self.menu_data:
-                        for item in self.menu_data["items"]:
-                            if len(item) > 5 and item[5] == old_name:
-                                item[5] = new_name
+                    for item in self.menu_data["items"]:
+                        if len(item) > 5 and item[5] == old_name:
+                            item[5] = new_name
                     
                     # Update group list
-                    self.groups.remove(old_name)
-                    self.groups.add(new_name)
-                    self.group_list.Set(sorted(list(self.groups)))
+                    index = self.groups[old_name]
+                    del self.groups[old_name]
+                    self.groups[new_name] = index
+                    self.update_group_list()
+                    
                     # Select the renamed group
-                    self.group_list.SetSelection(self.group_list.FindString(new_name))
+                    for i in range(self.group_list.GetItemCount()):
+                        if self.group_list.GetItemText(i, 0) == new_name:
+                            self.group_list.Select(i)
+                            break
+                            
                     self.update_ui()
                     
                     # Set result to true to indicate changes were made
@@ -178,11 +360,11 @@ class GroupManagerDialog(wx.Dialog):
     
     def on_delete_group(self, event):
         """Delete the selected group"""
-        selection = self.group_list.GetSelection()
-        if selection == wx.NOT_FOUND:
+        selection = self.group_list.GetFirstSelected()
+        if selection == -1:
             return
             
-        group_name = self.group_list.GetString(selection)
+        group_name = self.group_list.GetItemText(selection, 0)
         if group_name == "default":
             wx.MessageBox("Cannot delete the 'default' group", "Error", wx.ICON_ERROR)
             return
@@ -196,17 +378,16 @@ class GroupManagerDialog(wx.Dialog):
                 return
                 
             # Move elements to default group
-            if "items" in self.menu_data:
-                for item in self.menu_data["items"]:
-                    if len(item) > 5 and item[5] == group_name:
-                        item[5] = "default"
+            for item in self.menu_data["items"]:
+                if len(item) > 5 and item[5] == group_name:
+                    item[5] = "default"
         
         # Remove the group
-        self.groups.remove(group_name)
-        self.group_list.Set(sorted(list(self.groups)))
+        del self.groups[group_name]
+        self.update_group_list()
         
         # Clear selection
-        self.group_list.SetSelection(wx.NOT_FOUND)
+        self.group_list.Select(-1)
         self.update_ui()
         
         # Set result to true to indicate changes were made
@@ -214,6 +395,97 @@ class GroupManagerDialog(wx.Dialog):
         
         # CRITICAL: Immediately refresh parent panel
         wx.CallAfter(self.menu_panel.refresh_entire_panel)
+    
+    def on_move_up(self, event):
+        """Move the selected group up in the order"""
+        selection = self.group_list.GetFirstSelected()
+        if selection <= 0:  # Can't move up if already at top
+            return
+            
+        # Move by swapping with the previous item
+        self.move_group(selection, selection - 1)
+        
+    def on_move_down(self, event):
+        """Move the selected group down in the order"""
+        selection = self.group_list.GetFirstSelected()
+        if selection == -1 or selection >= self.group_list.GetItemCount() - 1:
+            return  # Can't move down if already at bottom
+            
+        # Move by swapping with the next item
+        self.move_group(selection, selection + 1)
+    
+    def on_set_index(self, event):
+        """Set a custom index for the selected group"""
+        selection = self.group_list.GetFirstSelected()
+        if selection == -1:
+            return
+            
+        group_name = self.group_list.GetItemText(selection, 0)
+        new_index = self.index_spinner.GetValue()
+        
+        # Check if this would create any duplicates
+        if any(idx == new_index for grp, idx in self.groups.items() if grp != group_name):
+            # Ask if we should adjust other indices
+            if wx.MessageBox(f"Another group already has index {new_index}. Adjust other indices?", 
+                           "Index Conflict", wx.YES_NO | wx.ICON_QUESTION) == wx.YES:
+                # Shift other groups to make room
+                for grp in self.groups:
+                    if grp != group_name and self.groups[grp] >= new_index:
+                        self.groups[grp] += 10
+        
+        # Update the group's index
+        old_index = self.groups[group_name]
+        self.groups[group_name] = new_index
+        
+        # Update all elements in this group
+        for item in self.menu_data["items"]:
+            item_group = item[5] if len(item) > 5 else "default"
+            if item_group == group_name:
+                # Ensure item has index field
+                while len(item) < 9:
+                    item.append(0)
+                
+                # Adjust the item's index by the difference
+                item_index = item[8]
+                if item_index >= old_index:
+                    # Only adjust item indices that were based on the old group index
+                    offset = item_index - old_index
+                    item[8] = new_index + offset
+        
+        # Update the list control
+        self.update_group_list()
+        
+        # Set return code and refresh parent
+        self.SetReturnCode(wx.ID_OK)
+        wx.CallAfter(self.menu_panel.refresh_entire_panel)
+    
+    def update_group_list(self):
+        """Update the group list control with current data"""
+        # Remember the current selection
+        selection = self.group_list.GetFirstSelected()
+        selected_group = None
+        if selection != -1:
+            selected_group = self.group_list.GetItemText(selection, 0)
+        
+        # Clear the list
+        self.group_list.DeleteAllItems()
+        
+        # Resort groups by index
+        sorted_groups = sorted(self.groups.items(), key=lambda x: x[1])
+        
+        # Repopulate the list
+        for i, (group_name, group_index) in enumerate(sorted_groups):
+            idx = self.group_list.InsertItem(i, group_name)
+            self.group_list.SetItem(idx, 1, str(group_index))
+            element_count = self.count_elements_in_group(group_name)
+            self.group_list.SetItem(idx, 2, str(element_count))
+            
+            # Restore selection
+            if group_name == selected_group:
+                self.group_list.Select(idx)
+        
+        # Update UI state
+        self.update_ui()
 
 
 class MenuPanel(scrolled.ScrolledPanel):
@@ -408,6 +680,23 @@ class MenuPanel(scrolled.ScrolledPanel):
         self.main_sizer.Add(elements_sizer, proportion=2, flag=wx.EXPAND | wx.ALL, border=10)
         
         self.SetSizer(self.main_sizer)
+
+    def on_add_region_image_condition(self, event):
+        """Add a new region image condition"""
+        from pflib.dialogs import RegionImageConditionDialog
+        
+        dialog = RegionImageConditionDialog(self)
+        if dialog.ShowModal() == wx.ID_OK:
+            condition = dialog.get_condition()
+            
+            if "conditions" not in self.menu_data:
+                self.menu_data["conditions"] = []
+                
+            self.menu_data["conditions"].append(condition)
+            self.update_conditions_list()
+            self.profile_editor.mark_profile_changed()
+            
+        dialog.Destroy()
     
     # Drag and drop implementation for elements list
     def on_element_left_down(self, event):
@@ -560,7 +849,7 @@ class MenuPanel(scrolled.ScrolledPanel):
             delattr(self, 'drag_group_name')
     
     def move_element(self, src_list_idx, dst_list_idx):
-        """Move an element in the UI elements list"""
+        """Move an element in the UI elements list, updating indices appropriately"""
         if not self.menu_data or "items" not in self.menu_data:
             return False
             
@@ -583,6 +872,22 @@ class MenuPanel(scrolled.ScrolledPanel):
                 element.append(dst_group)
             else:
                 element[5] = dst_group
+                
+            # Find the lowest index in the destination group
+            min_index = 999999
+            for item in self.menu_data["items"]:
+                item_group = item[5] if len(item) > 5 else "default"
+                if item_group == dst_group:
+                    item_index = item[8] if len(item) > 8 else 0
+                    min_index = min(min_index, item_index)
+            
+            # Set the element's index to be one less than the minimum
+            if min_index < 999999:
+                if len(element) <= 8:
+                    # Ensure element has enough fields
+                    while len(element) < 9:
+                        element.append(0)
+                element[8] = max(0, min_index - 1)
                 
             return True
         elif dst_data_idx == -1:  # It's a separator or other non-element
@@ -626,9 +931,49 @@ class MenuPanel(scrolled.ScrolledPanel):
             else:
                 element[5] = dst_group
         
+        # Adjust index to place near destination element
+        dst_index = dst_element[8] if len(dst_element) > 8 else 0
+        
+        # Ensure element has an index field
+        while len(element) < 9:
+            element.append(0)
+            
+        # Put it just after the destination element's index
+        element[8] = dst_index + 1
+        
         # Insert at destination
         self.menu_data["items"].insert(dst_data_idx, element)
+        
+        # Re-index all items in this group to ensure they're sequential
+        self.reindex_group_elements(dst_group)
+        
         return True
+
+    def reindex_group_elements(self, group_name):
+        """Reindex all elements in a group to ensure they remain in sequence"""
+        if not self.menu_data or "items" not in self.menu_data:
+            return
+            
+        # Get all elements in this group
+        group_elements = []
+        for i, element in enumerate(self.menu_data["items"]):
+            element_group = element[5] if len(element) > 5 else "default"
+            if element_group == group_name:
+                # Get current index or default to 0
+                element_index = element[8] if len(element) > 8 else 0
+                group_elements.append((i, element, element_index))
+        
+        # Sort by current index
+        group_elements.sort(key=lambda x: x[2])
+        
+        # Reassign indices to be sequential
+        for i, (element_idx, element, _) in enumerate(group_elements):
+            # Ensure element has enough fields
+            while len(element) < 9:
+                element.append(0)
+            element[8] = i * 10  # Use multiples of 10 to leave room for manual adjustments
+            
+        return
     
     def move_group(self, group_name, dst_list_idx):
         """Move a group in the UI elements list"""
@@ -903,6 +1248,9 @@ class MenuPanel(scrolled.ScrolledPanel):
             elif condition_type == "pixel_region_color":
                 details = f"Region ({condition['x1']}, {condition['y1']}) to ({condition['x2']}, {condition['y2']}), " \
                           f"RGB{condition['color']} +/-{condition['tolerance']}, thresh={condition['threshold']}"
+            elif condition_type == "pixel_region_image":
+                details = f"Region ({condition['x1']}, {condition['y1']}) to ({condition['x2']}, {condition['y2']}), " \
+                          f"confidence={condition['confidence']:.2f}, has_image={'Yes' if condition.get('image_data') else 'No'}"
             else:
                 details = str(condition)
             
@@ -910,7 +1258,7 @@ class MenuPanel(scrolled.ScrolledPanel):
             self.conditions_list.SetItem(idx, 1, details)
     
     def update_elements_list(self):
-        """Update the elements list with current data"""
+        """Update the elements list with current data, sorted by index field"""
         self.elements_list.DeleteAllItems()
         
         if "items" not in self.menu_data:
@@ -923,24 +1271,26 @@ class MenuPanel(scrolled.ScrolledPanel):
         else:
             selected_group = self.group_filter.GetString(filter_idx)
         
-        # Sort items by group for grouped display
+        # Sort items by group and index for grouped display
         sorted_items = []
         if "items" in self.menu_data:
             for i, element in enumerate(self.menu_data["items"]):
                 # Get the group (default to "default" if not present)
                 group = element[5] if len(element) > 5 else "default"
+                # Get the index (default to 0 if not present)
+                index = element[8] if len(element) > 8 else 0
                 # Only include items matching the filter, if one is selected
                 if selected_group is None or group == selected_group:
-                    sorted_items.append((i, element, group))
+                    sorted_items.append((i, element, group, index))
         
-        # Sort by group
-        sorted_items.sort(key=lambda x: x[2])
+        # Sort by group first, then by index within each group
+        sorted_items.sort(key=lambda x: (x[2], x[3]))
         
         # Add items to the list
         current_group = None
         list_idx = 0
         
-        for orig_idx, element, group in sorted_items:
+        for orig_idx, element, group, index in sorted_items:
             # Add group header if this is a new group
             if current_group != group:
                 if list_idx > 0:  # Add separator if not the first group
@@ -976,6 +1326,18 @@ class MenuPanel(scrolled.ScrolledPanel):
             # Check for custom announcement format
             has_custom_format = len(element) > 7 and element[7]
             self.elements_list.SetItem(idx, 6, "Yes" if has_custom_format else "")
+            
+            # Add index as last column 
+            element_index = element[8] if len(element) > 8 else 0
+            self.elements_list.InsertColumn(7, "Index", width=50)  # Add this if not already present
+            self.elements_list.SetItem(idx, 7, str(element_index))
+            
+            # Has conditional elements 
+            has_conditions = len(element) > 9 and element[9]
+            if "Conditions" not in [self.elements_list.GetColumn(i).GetText() for i in range(self.elements_list.GetColumnCount())]:
+                self.elements_list.InsertColumn(8, "Conditions", width=80)
+            
+            self.elements_list.SetItem(idx, 8, f"{len(element[9])}" if has_conditions else "")
             
             # Store the original index for this item
             self.elements_list.SetItemData(idx, orig_idx)
@@ -1120,6 +1482,10 @@ class MenuPanel(scrolled.ScrolledPanel):
                                              condition=condition)
         elif condition["type"] == "pixel_region_color":
             dialog = RegionColorConditionDialog(self, title="Edit Region Color Condition", 
+                                              condition=condition)
+        elif condition["type"] == "pixel_region_image":
+            from pflib.dialogs import RegionImageConditionDialog  # Import here to avoid circular imports
+            dialog = RegionImageConditionDialog(self, title="Edit Region Image Condition", 
                                               condition=condition)
         else:
             wx.MessageBox(f"Cannot edit condition of type: {condition['type']}", 
@@ -1420,9 +1786,24 @@ class MenuPanel(scrolled.ScrolledPanel):
         # Update the group choices to include all existing groups
         dialog.group_ctrl.SetItems(sorted(list(groups)))
         
+        # Add index field to bulk edit dialog
+        index_box = wx.BoxSizer(wx.HORIZONTAL)
+        index_cb = wx.CheckBox(dialog.panel, label="Change index:")
+        index_ctrl = wx.SpinCtrl(dialog.panel, min=0, max=999, value="0")
+        index_ctrl.Enable(False)
+        index_cb.Bind(wx.EVT_CHECKBOX, lambda evt: index_ctrl.Enable(evt.IsChecked()))
+        
+        index_box.Add(index_cb, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        index_box.Add(index_ctrl, proportion=1)
+        dialog.main_sizer.Insert(4, index_box, flag=wx.ALL | wx.EXPAND, border=10)  # Insert at appropriate position
+        
         if dialog.ShowModal() == wx.ID_OK:
             # Get the changes to apply
             changes = dialog.get_bulk_changes()
+            
+            # Add index to changes if selected
+            if index_cb.GetValue():
+                changes['index'] = index_ctrl.GetValue()
             
             if not changes:
                 dialog.Destroy()
@@ -1470,6 +1851,13 @@ class MenuPanel(scrolled.ScrolledPanel):
                         element.append([])
                     element[6] = []
                 
+                # Apply index change if specified
+                if 'index' in changes:
+                    # Ensure element list is long enough
+                    while len(element) < 9:
+                        element.append(0)
+                    element[8] = changes['index']
+                
                 modified += 1
             
             # Refresh everything to ensure consistency
@@ -1486,7 +1874,7 @@ class MenuPanel(scrolled.ScrolledPanel):
                 pass
         
         dialog.Destroy()
-    
+        
     def on_bulk_edit_conditions(self, event):
         """Edit properties for multiple selected conditions at once"""
         # Get all selected indices
