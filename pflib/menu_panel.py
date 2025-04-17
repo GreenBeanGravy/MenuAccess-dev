@@ -569,25 +569,29 @@ class MenuPanel(scrolled.ScrolledPanel):
         conditions_sizer = wx.StaticBoxSizer(conditions_box, wx.VERTICAL)
         
         # Add condition buttons
-        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        btn_sizer = wx.FlexGridSizer(rows=1, cols=4, vgap=5, hgap=5)
+        btn_sizer.AddGrowableCol(3)  # Make last column growable
         add_pixel_btn = wx.Button(self, label="Add Pixel Color")
         add_pixel_btn.Bind(wx.EVT_BUTTON, self.on_add_pixel_condition)
         add_region_btn = wx.Button(self, label="Add Region Color")
         add_region_btn.Bind(wx.EVT_BUTTON, self.on_add_region_condition)
+        # Add new button for image region condition
+        add_region_image_btn = wx.Button(self, label="Add Region Image")
+        add_region_image_btn.Bind(wx.EVT_BUTTON, self.on_add_region_image_condition)
         
         paste_condition_btn = wx.Button(self, label="Paste Condition(s)")
         paste_condition_btn.Bind(wx.EVT_BUTTON, self.on_paste_condition)
         
         btn_sizer.Add(add_pixel_btn, flag=wx.RIGHT, border=5)
         btn_sizer.Add(add_region_btn, flag=wx.RIGHT, border=5)
+        btn_sizer.Add(add_region_image_btn, flag=wx.RIGHT, border=5)
         btn_sizer.Add(paste_condition_btn)
-        conditions_sizer.Add(btn_sizer, flag=wx.ALL, border=5)
         
         # Conditions list - using just wx.LC_REPORT since multi-select is default
         # Make sure it's resizable by adding proportion=1
         self.conditions_list = wx.ListCtrl(self, style=wx.LC_REPORT, size=(-1, 150))
-        self.conditions_list.InsertColumn(0, "Type", width=150)
-        self.conditions_list.InsertColumn(1, "Details", width=450)
+        self.conditions_list.InsertColumn(0, "Type", width=120)
+        self.conditions_list.InsertColumn(1, "Details", width=400)
         
         # Populate conditions
         self.update_conditions_list()
@@ -644,13 +648,15 @@ class MenuPanel(scrolled.ScrolledPanel):
         
         # Elements list - with wider columns and drag-and-drop support
         self.elements_list = wx.ListCtrl(self, style=wx.LC_REPORT | wx.LC_SINGLE_SEL, size=(-1, 200))
-        self.elements_list.InsertColumn(0, "Name", width=225)
-        self.elements_list.InsertColumn(1, "Type", width=120)
-        self.elements_list.InsertColumn(2, "Position", width=120)
-        self.elements_list.InsertColumn(3, "Group", width=120)
-        self.elements_list.InsertColumn(4, "Submenu", width=120)
-        self.elements_list.InsertColumn(5, "OCR", width=90)
-        self.elements_list.InsertColumn(6, "Custom Format", width=120)
+        self.elements_list.InsertColumn(0, "Name", width=180)
+        self.elements_list.InsertColumn(1, "Type", width=100)
+        self.elements_list.InsertColumn(2, "Position", width=90)
+        self.elements_list.InsertColumn(3, "Group", width=100)
+        self.elements_list.InsertColumn(4, "Submenu", width=100)
+        self.elements_list.InsertColumn(5, "OCR", width=60)
+        self.elements_list.InsertColumn(6, "Custom Format", width=100)
+        self.elements_list.InsertColumn(7, "Index", width=60)
+        self.elements_list.InsertColumn(8, "Conditions", width=80)
         
         # Set up drag and drop events
         self.elements_list.Bind(wx.EVT_LEFT_DOWN, self.on_element_left_down)
