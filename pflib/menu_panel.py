@@ -505,6 +505,9 @@ class MenuPanel(scrolled.ScrolledPanel):
         self.drag_group = False
         self.drop_indicator_line = None
         
+        # Set minimum size to prevent squishing
+        self.SetMinSize((750, 600))  # ADDED: Set minimum panel size
+        
         # Bind keyboard events
         self.Bind(wx.EVT_KEY_DOWN, self.on_key_down)
         
@@ -520,7 +523,7 @@ class MenuPanel(scrolled.ScrolledPanel):
     def init_ui(self):
         # Main sizer that contains everything
         self.main_sizer = wx.BoxSizer(wx.VERTICAL)
-        
+
         # Menu Header
         header_sizer = wx.BoxSizer(wx.HORIZONTAL)
         title = wx.StaticText(self, label=f"Menu: {self.menu_id}")
@@ -531,61 +534,64 @@ class MenuPanel(scrolled.ScrolledPanel):
         option_sizer = wx.BoxSizer(wx.HORIZONTAL)
         
         self.reset_index_cb = wx.CheckBox(self, label="Reset index when entering menu")
-        self.reset_index_cb.SetValue(self.menu_data.get("reset_index", True))  # Default to True for backward compatibility
+        self.reset_index_cb.SetValue(self.menu_data.get("reset_index", True))
         self.reset_index_cb.Bind(wx.EVT_CHECKBOX, self.on_reset_index_changed)
         option_sizer.Add(self.reset_index_cb, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=15)
         
         # Add reset group option
         reset_group_label = wx.StaticText(self, label="Reset to group:")
-        # Default group options (will be populated with actual groups later)
         standard_groups = ["default"]
-        # Use a combobox to allow both selection from predefined options and custom input
         self.reset_group_ctrl = wx.ComboBox(self, choices=standard_groups,
-                                         value=self.menu_data.get("reset_group", "default"))
+                                            value=self.menu_data.get("reset_group", "default"))
         option_sizer.Add(reset_group_label, flag=wx.LEFT | wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
         option_sizer.Add(self.reset_group_ctrl, proportion=1)
         
-        # Add to header sizer
-        header_sizer.Add(option_sizer, flag=wx.LEFT | wx.ALIGN_CENTER_VERTICAL, border=15)
+        # Add options to header with proportion=1 to make it expand
+        header_sizer.Add(option_sizer, proportion=1, flag=wx.LEFT, border=15)
         
-        # Menu action buttons
+        # Buttons in their own sizer
+        buttons_sizer = wx.BoxSizer(wx.HORIZONTAL)
         duplicate_btn = wx.Button(self, label="Duplicate")
         duplicate_btn.Bind(wx.EVT_BUTTON, self.on_duplicate_menu)
-        
         rename_btn = wx.Button(self, label="Rename")
         rename_btn.Bind(wx.EVT_BUTTON, self.on_rename_menu)
-        
         delete_btn = wx.Button(self, label="Delete")
         delete_btn.Bind(wx.EVT_BUTTON, self.on_delete_menu)
         
-        header_sizer.Add(duplicate_btn, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
-        header_sizer.Add(rename_btn, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
-        header_sizer.Add(delete_btn, flag=wx.ALIGN_CENTER_VERTICAL)
+        buttons_sizer.Add(duplicate_btn, flag=wx.RIGHT, border=5)
+        buttons_sizer.Add(rename_btn, flag=wx.RIGHT, border=5)
+        buttons_sizer.Add(delete_btn)
         
-        self.main_sizer.Add(header_sizer, flag=wx.EXPAND | wx.ALL, border=5)
+        # Add buttons to header without alignment flags
+        header_sizer.Add(buttons_sizer, flag=wx.LEFT, border=10)
+        
+        self.main_sizer.Add(header_sizer, flag=wx.EXPAND | wx.ALL, border=10)
         
         # Conditions section
         conditions_box = wx.StaticBox(self, label="Menu Detection Conditions")
         conditions_sizer = wx.StaticBoxSizer(conditions_box, wx.VERTICAL)
         
         # Add condition buttons
-        btn_sizer = wx.FlexGridSizer(rows=1, cols=4, vgap=5, hgap=5)
-        btn_sizer.AddGrowableCol(3)  # Make last column growable
+        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)  # UPDATED: Changed to simple horizontal BoxSizer
+        
         add_pixel_btn = wx.Button(self, label="Add Pixel Color")
         add_pixel_btn.Bind(wx.EVT_BUTTON, self.on_add_pixel_condition)
+        btn_sizer.Add(add_pixel_btn, flag=wx.RIGHT, border=5)
+        
         add_region_btn = wx.Button(self, label="Add Region Color")
         add_region_btn.Bind(wx.EVT_BUTTON, self.on_add_region_condition)
+        btn_sizer.Add(add_region_btn, flag=wx.RIGHT, border=5)
+        
         # Add new button for image region condition
         add_region_image_btn = wx.Button(self, label="Add Region Image")
         add_region_image_btn.Bind(wx.EVT_BUTTON, self.on_add_region_image_condition)
+        btn_sizer.Add(add_region_image_btn, flag=wx.RIGHT, border=5)
         
         paste_condition_btn = wx.Button(self, label="Paste Condition(s)")
         paste_condition_btn.Bind(wx.EVT_BUTTON, self.on_paste_condition)
+        btn_sizer.Add(paste_condition_btn, proportion=1, flag=wx.EXPAND)  # UPDATED: Added proportion and expand
         
-        btn_sizer.Add(add_pixel_btn, flag=wx.RIGHT, border=5)
-        btn_sizer.Add(add_region_btn, flag=wx.RIGHT, border=5)
-        btn_sizer.Add(add_region_image_btn, flag=wx.RIGHT, border=5)
-        btn_sizer.Add(paste_condition_btn)
+        conditions_sizer.Add(btn_sizer, flag=wx.EXPAND | wx.ALL, border=5)  # ADDED: Added to sizer
         
         # Conditions list - using just wx.LC_REPORT since multi-select is default
         # Make sure it's resizable by adding proportion=1
@@ -643,11 +649,11 @@ class MenuPanel(scrolled.ScrolledPanel):
         paste_element_btn.Bind(wx.EVT_BUTTON, self.on_paste_element)
         
         element_btn_sizer.Add(add_element_btn, flag=wx.RIGHT, border=5)
-        element_btn_sizer.Add(paste_element_btn)
-        elements_sizer.Add(element_btn_sizer, flag=wx.ALL, border=5)
+        element_btn_sizer.Add(paste_element_btn, proportion=1, flag=wx.EXPAND)  # UPDATED: Added proportion
+        elements_sizer.Add(element_btn_sizer, flag=wx.EXPAND | wx.ALL, border=5)
         
         # Elements list - with wider columns and drag-and-drop support
-        self.elements_list = wx.ListCtrl(self, style=wx.LC_REPORT | wx.LC_SINGLE_SEL, size=(-1, 200))
+        self.elements_list = wx.ListCtrl(self, style=wx.LC_REPORT | wx.LC_SINGLE_SEL, size=(-1, 250))  # UPDATED: Increased height
         self.elements_list.InsertColumn(0, "Name", width=180)
         self.elements_list.InsertColumn(1, "Type", width=100)
         self.elements_list.InsertColumn(2, "Position", width=90)
@@ -676,7 +682,7 @@ class MenuPanel(scrolled.ScrolledPanel):
         # Install key event handlers for the list
         self.elements_list.Bind(wx.EVT_KEY_DOWN, self.on_elements_key)
         
-        elements_sizer.Add(self.elements_list, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
+        elements_sizer.Add(self.elements_list, proportion=2, flag=wx.EXPAND | wx.ALL, border=5)  # UPDATED: Increased proportion
         
         # Add drag and drop help text
         drag_help = wx.StaticText(self, label="Tip: Drag elements or group headers to rearrange them")
@@ -686,6 +692,10 @@ class MenuPanel(scrolled.ScrolledPanel):
         self.main_sizer.Add(elements_sizer, proportion=2, flag=wx.EXPAND | wx.ALL, border=10)
         
         self.SetSizer(self.main_sizer)
+        
+        # Force proper layout before finishing
+        self.main_sizer.Fit(self)
+        self.Layout()
 
     def on_add_region_image_condition(self, event):
         """Add a new region image condition"""
@@ -1335,14 +1345,10 @@ class MenuPanel(scrolled.ScrolledPanel):
             
             # Add index as last column 
             element_index = element[8] if len(element) > 8 else 0
-            self.elements_list.InsertColumn(7, "Index", width=50)  # Add this if not already present
             self.elements_list.SetItem(idx, 7, str(element_index))
             
             # Has conditional elements 
             has_conditions = len(element) > 9 and element[9]
-            if "Conditions" not in [self.elements_list.GetColumn(i).GetText() for i in range(self.elements_list.GetColumnCount())]:
-                self.elements_list.InsertColumn(8, "Conditions", width=80)
-            
             self.elements_list.SetItem(idx, 8, f"{len(element[9])}" if has_conditions else "")
             
             # Store the original index for this item
@@ -1352,6 +1358,9 @@ class MenuPanel(scrolled.ScrolledPanel):
         
         # End any drag operation in progress
         self.end_drag()
+        
+        # Force proper layout refresh
+        self.Layout()
     
     def on_add_pixel_condition(self, event):
         """Add a new pixel color condition"""
