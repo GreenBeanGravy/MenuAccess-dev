@@ -297,6 +297,7 @@ class AccessibleMenuNavigator:
         self.group_positions = {}  # Stores the position within each group
         self.menu_groups = {}      # Stores the groups for each menu
         self.menu_group_positions = {}  # Format: {menu_id: {group_name: position}}
+        self.last_announced_group = None
         
         # OCR setup
         self.reader = None  # Will be initialized when needed
@@ -667,6 +668,7 @@ class AccessibleMenuNavigator:
             except Exception as e:
                 self.log(f"Menu detection error: {e}", logging.ERROR)
                 time.sleep(0.1)  # Longer pause on error
+
     
     def find_valid_group(self, menu_id, preferred_group="default"):
         """Find a group that contains at least one element, preferring the specified group"""
@@ -974,6 +976,20 @@ class AccessibleMenuNavigator:
         has_submenu = item[4] is not None
         submenu_indicator = "submenu" if has_submenu else ""
         
+        # Get the group for this item
+        item_group = item[5] if len(item) > 5 else "default"
+        
+        # Get all items in this group to calculate position within group
+        group_items = self.get_group_items(menu_id, item_group)
+        
+        # Find the index of this position within the group
+        try:
+            group_index = group_items.index(position)
+            group_index_message = f"{group_index + 1} of {len(group_items)}"
+        except ValueError:
+            # Fallback if item not found in its own group (shouldn't happen)
+            group_index_message = f"1 of {len(group_items)}"
+        
         # Check for OCR regions
         has_ocr = len(item) > 6 and item[6]
         
@@ -986,13 +1002,15 @@ class AccessibleMenuNavigator:
             'type': item[2],
             'speaks_on_select': item[3],
             'submenu': item[4],
-            'index_message': f"{position + 1} of {len(items)}",
+            'index_message': group_index_message,  # Now uses group-specific index
+            'overall_index_message': f"{position + 1} of {len(items)}",  # Keep overall index for reference
             'has_submenu': has_submenu,
             'submenu_indicator': submenu_indicator,
-            'group': item[5] if len(item) > 5 else "default",
+            'group': item_group,
             'has_ocr': has_ocr,
             'custom_announcement': custom_announcement
         }
+
     
     def format_announcement(self, details, ocr_results={}):
         """Format an announcement message using the template or defaults"""
@@ -1014,9 +1032,9 @@ class AccessibleMenuNavigator:
             'group': details['group']
         }
         
-        # Add OCR results to replacements
+        # Add OCR results to replacements (convert to lowercase)
         for tag, text in ocr_results.items():
-            replacements[tag] = text
+            replacements[tag] = text.lower()
         
         # Perform replacements
         result = template
@@ -1024,6 +1042,7 @@ class AccessibleMenuNavigator:
             result = result.replace(f"{{{key}}}", str(value))
         
         return result
+
     
     def announce_item(self, details):
         """Announce an item with enhanced formatting"""
@@ -1036,10 +1055,17 @@ class AccessibleMenuNavigator:
         if details.get('has_ocr'):
             ocr_results = self.process_ocr_regions(self.menu_stack[-1], self.current_position)
         
+        # Check if the group has changed since last announcement
+        current_group = details['group']
+        if current_group != self.last_announced_group:
+            # Group has changed, announce the group name first (without "Group:" prefix)
+            self.speak(f"{current_group}")
+            self.last_announced_group = current_group
+        
         # Format the announcement
         message = self.format_announcement(details, ocr_results)
-        
         self.speak(message)
+
     
     def set_position(self, position, announce=True):
         """Set position within a menu"""
@@ -1053,6 +1079,9 @@ class AccessibleMenuNavigator:
         if details:
             self.enqueue_mouse_move(details['coordinates'])
             if announce:
+                # Check if group changed
+                if details['group'] != self.current_group:
+                    self.current_group = details['group']
                 self.announce_item(details)
         else:
             self.speak("Item not found")
@@ -1191,6 +1220,9 @@ class AccessibleMenuNavigator:
         # Set position
         self.set_position(position, announce=announce)
         
+        # Update last_announced_group to prevent duplicate announcement
+        self.last_announced_group = group
+        
         return True
     
     def get_group_items(self, menu_id, group):
@@ -1218,6 +1250,7 @@ class AccessibleMenuNavigator:
             self.log(f"No items in group '{group}' for menu '{menu_id}'", logging.WARNING)
             
         return group_indices
+    
     
     def navigate_to_next_group(self):
         """Navigate to the next group with items"""
@@ -1255,7 +1288,7 @@ class AccessibleMenuNavigator:
             if items:
                 # Found a group with items
                 if self.navigate_to_group(next_group):
-                    self.speak(f"{next_group}")
+                    # Don't announce the group name here, it will be announced in navigate_to_group
                     return
         
         # If we get here, no other group has items
@@ -1297,11 +1330,13 @@ class AccessibleMenuNavigator:
             if items:
                 # Found a group with items
                 if self.navigate_to_group(prev_group):
-                    self.speak(f"Group: {prev_group}")
+                    # Don't announce the group name here, it will be announced in navigate_to_group
                     return
         
         # If we get here, no other group has items
         self.speak(f"No other groups with items available")
+        
+        return True
     
     def check_for_menu_change(self):
         """Check for menu changes - now handles group positions better"""

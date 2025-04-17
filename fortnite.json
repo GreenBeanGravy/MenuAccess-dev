@@ -107,8 +107,8 @@
       ],
       [
         [
-          263,
-          764
+          259,
+          802
         ],
         "Gamemode",
         "button",
@@ -117,14 +117,27 @@
         "Main",
         [
           {
-            "x1": 93,
-            "y1": 436,
-            "x2": 436,
-            "y2": 717,
+            "x1": 82,
+            "y1": 595,
+            "x2": 437,
+            "y2": 846,
             "tag": "ocr1"
           }
         ],
         "{name}, {ocr1} {type}, {index}"
+      ],
+      [
+        [
+          257,
+          896
+        ],
+        "Play",
+        "button",
+        false,
+        null,
+        "Main",
+        [],
+        null
       ]
     ],
     "reset_group": "Main"
@@ -896,5 +909,109 @@
       ]
     ],
     "reset_group": "Tab Control"
+  },
+  "gamemode-settings": {
+    "conditions": [
+      {
+        "type": "pixel_color",
+        "x": 163,
+        "y": 886,
+        "color": [
+          123,
+          134,
+          38
+        ],
+        "tolerance": 10
+      },
+      {
+        "type": "pixel_color",
+        "x": 381,
+        "y": 889,
+        "color": [
+          123,
+          134,
+          38
+        ],
+        "tolerance": 10
+      },
+      {
+        "type": "pixel_color",
+        "x": 1298,
+        "y": 359,
+        "color": [
+          12,
+          16,
+          34
+        ],
+        "tolerance": 10
+      },
+      {
+        "type": "pixel_color",
+        "x": 1346,
+        "y": 28,
+        "color": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 10
+      }
+    ],
+    "items": [
+      [
+        [
+          1356,
+          614
+        ],
+        "Solo",
+        "button",
+        true,
+        null,
+        "Team Size",
+        [],
+        null
+      ],
+      [
+        [
+          1354,
+          728
+        ],
+        "Duo",
+        "button",
+        true,
+        null,
+        "Team Size",
+        [],
+        null
+      ],
+      [
+        [
+          1365,
+          825
+        ],
+        "Trio",
+        "button",
+        true,
+        null,
+        "Team Size",
+        [],
+        null
+      ],
+      [
+        [
+          1363,
+          930
+        ],
+        "Squad",
+        "button",
+        true,
+        null,
+        "Team Size",
+        [],
+        null
+      ]
+    ],
+    "reset_index": true,
+    "reset_group": "Team Size"
   }
 }
