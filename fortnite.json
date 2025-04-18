@@ -3,14 +3,23 @@
     "conditions": [
       {
         "type": "pixel_color",
-        "x": 164,
-        "y": 68,
+        "x": 167,
+        "y": 67,
         "color": [
-          13,
+          15,
           13,
           28
         ],
         "tolerance": 10
+      },
+      {
+        "type": "pixel_region_image",
+        "x1": 164,
+        "y1": 61,
+        "x2": 181,
+        "y2": 81,
+        "confidence": 0.7,
+        "image_data": "iVBORw0KGgoAAAANSUhEUgAAABEAAAAUCAIAAADkwkEeAAABKUlEQVR4nJVTPW+DMBA9iDEDolECS4OZ4iFNpeb//4FmaqRmSNUMbYcGUJEaguJKDR/OQIocsEF90/ndvbvzna0Fuxik4HIaABBweFqtVG4T45vhcHI7QWggaAD2++/DIVWmBUAI3c/nlNLqqHeE1sjz/Hm9ft1u/6Gp8LLZZFl26a0BSqeu43LO4/jr7f2j5ouyjKLI932JBgA8zwMAQshnEJx+TzXPGOvvDRuGeCzKokeTpunxyETGxCYAINCaoYz9PC6XnJdJkjRco/EIpDMIw1Ba1nUdZ+z09CYCY2PxsKhs+dxEDHSd+P7dbGZZ1kXTfoqUTolHKtswDNu2Nf3q0vI6jut0VJZr1P9AranQ2sIfH+ziRtar0HZFDfRGkCq3mEWxn07pGQ4tVcQLhjL7AAAAAElFTkSuQmCC"
       }
     ],
     "reset_index": true,
@@ -146,10 +155,10 @@
     "conditions": [
       {
         "type": "pixel_color",
-        "x": 262,
-        "y": 66,
+        "x": 268,
+        "y": 65,
         "color": [
-          13,
+          15,
           13,
           28
         ],
@@ -254,10 +263,10 @@
     "conditions": [
       {
         "type": "pixel_color",
-        "x": 408,
-        "y": 69,
+        "x": 396,
+        "y": 66,
         "color": [
-          13,
+          15,
           13,
           28
         ],
@@ -362,10 +371,10 @@
     "conditions": [
       {
         "type": "pixel_color",
-        "x": 497,
-        "y": 66,
+        "x": 499,
+        "y": 69,
         "color": [
-          13,
+          15,
           13,
           28
         ],
@@ -470,8 +479,8 @@
     "conditions": [
       {
         "type": "pixel_color",
-        "x": 661,
-        "y": 69,
+        "x": 629,
+        "y": 71,
         "color": [
           15,
           13,
@@ -578,10 +587,10 @@
     "conditions": [
       {
         "type": "pixel_color",
-        "x": 757,
-        "y": 67,
+        "x": 759,
+        "y": 68,
         "color": [
-          13,
+          15,
           13,
           28
         ],
@@ -686,10 +695,10 @@
     "conditions": [
       {
         "type": "pixel_color",
-        "x": 907,
-        "y": 68,
+        "x": 910,
+        "y": 69,
         "color": [
-          13,
+          15,
           13,
           28
         ],
@@ -788,7 +797,8 @@
         "lobby-vbucks",
         "Tab Control"
       ]
-    ]
+    ],
+    "reset_group": "default"
   },
   "lobby-vbucks": {
     "conditions": [

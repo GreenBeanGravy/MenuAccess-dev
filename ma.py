@@ -20,6 +20,8 @@ from PIL import Image
 import mss
 from functools import lru_cache
 import easyocr
+import base64
+import io
 
 # Setup logging with faster string formatting
 logging.basicConfig(level=logging.INFO, format='%(message)s')
@@ -31,7 +33,7 @@ MOUSEEVENTF_LEFTUP = 0x0004
 
 
 class MenuConditionChecker:
-    """Ultra-optimized class for checking menu conditions"""
+    """Highly optimized class for checking menu conditions with performance enhancements"""
     
     def __init__(self):
         """Initialize the condition checker with performance optimizations"""
@@ -42,13 +44,26 @@ class MenuConditionChecker:
         self._last_screenshot_time = 0
         self._cache_ttl = 0.05  # 50ms TTL for caches
         self._sample_positions = {}  # Cache for sampling positions
+        
+        # Initialize ORB feature detector for image matching
+        self.orb = cv2.ORB_create(nfeatures=1000)
+        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
     
     def set_verbose(self, verbose):
-        """Set verbose mode"""
+        """Enable or disable verbose logging mode"""
         self.verbose = verbose
     
     def check_menu_conditions(self, menu_data, screenshot_pil):
-        """Ultra-fast check if all conditions for a menu are met"""
+        """
+        Check if all conditions for a menu are met
+        
+        Args:
+            menu_data: Dictionary containing menu conditions
+            screenshot_pil: PIL Image of current screen
+            
+        Returns:
+            bool: True if all conditions are met, False otherwise
+        """
         conditions = menu_data.get("conditions", [])
         
         # If no conditions, return False (can't detect)
@@ -62,7 +77,7 @@ class MenuConditionChecker:
             if cache_key in self._cache:
                 result = self._cache[cache_key]
             else:
-                result = self._check_condition_optimized(condition, screenshot_pil)
+                result = self._check_condition(condition, screenshot_pil)
                 self._cache[cache_key] = result
             
             if not result:
@@ -71,8 +86,17 @@ class MenuConditionChecker:
         # All conditions passed
         return True
     
-    def _check_condition_optimized(self, condition, screenshot_pil):
-        """Highly optimized condition checker"""
+    def _check_condition(self, condition, screenshot_pil):
+        """
+        Check if a single condition is met with optimized algorithms
+        
+        Args:
+            condition: Dictionary containing condition parameters
+            screenshot_pil: PIL Image of current screen
+            
+        Returns:
+            bool: True if condition is met, False otherwise
+        """
         if not condition:
             return False
             
@@ -205,12 +229,94 @@ class MenuConditionChecker:
                 
             except:
                 return False
+                
+        elif condition_type == "pixel_region_image":
+            try:
+                x1 = condition.get("x1", 0)
+                y1 = condition.get("y1", 0)
+                x2 = condition.get("x2", 0)
+                y2 = condition.get("y2", 0)
+                image_data = condition.get("image_data")
+                confidence = condition.get("confidence", 0.8)
+                
+                if not image_data:
+                    return False
+                
+                # Decode the base64 image data
+                image_bytes = base64.b64decode(image_data)
+                
+                # Create a PIL Image from the decoded data
+                template_pil = Image.open(io.BytesIO(image_bytes))
+                
+                # Extract the region from the screenshot to check
+                region = screenshot_pil.crop((x1, y1, x2, y2))
+                
+                # Convert PIL images to OpenCV format (numpy arrays)
+                template_cv = np.array(template_pil)
+                region_cv = np.array(region)
+                
+                # Convert to grayscale for feature detection
+                if len(template_cv.shape) > 2:  # If it has 3 channels (RGB)
+                    template_gray = cv2.cvtColor(template_cv, cv2.COLOR_RGB2GRAY)
+                else:
+                    template_gray = template_cv
+                    
+                if len(region_cv.shape) > 2:  # If it has 3 channels (RGB)
+                    region_gray = cv2.cvtColor(region_cv, cv2.COLOR_RGB2GRAY)
+                else:
+                    region_gray = region_cv
+                
+                # Detect ORB features and compute descriptors
+                kp1, des1 = self.orb.detectAndCompute(template_gray, None)
+                kp2, des2 = self.orb.detectAndCompute(region_gray, None)
+                
+                # If no features found, try structural similarity as fallback
+                if des1 is None or des2 is None or len(des1) < 2 or len(des2) < 2:
+                    # Use structural similarity index as fallback
+                    ssim_score = cv2.matchTemplate(
+                        template_gray, region_gray, cv2.TM_CCOEFF_NORMED)[0, 0]
+                    return ssim_score >= confidence
+                
+                # Match descriptors
+                matches = self.matcher.match(des1, des2)
+                
+                # Sort matches by distance
+                matches = sorted(matches, key=lambda x: x.distance)
+                
+                # Calculate match ratio (number of good matches / total matches)
+                good_matches_threshold = 0.8  # Lower distance = better match
+                good_matches = [m for m in matches if m.distance < good_matches_threshold]
+                
+                # Compute similarity score based on number of good matches
+                if len(kp1) == 0:  # Prevent division by zero
+                    similarity_score = 0
+                else:
+                    similarity_score = len(good_matches) / len(kp1)
+                
+                if self.verbose:
+                    logger.debug(f"Image match score: {similarity_score:.3f}, confidence threshold: {confidence:.3f}")
+                
+                # Compare with the confidence threshold
+                return similarity_score >= confidence
+                
+            except Exception as e:
+                if self.verbose:
+                    logger.error(f"Image match error: {str(e)}")
+                return False
         
         # Unknown condition type
         return False
     
-    def detect_active_menu(self, all_menus):
-        """Ultra-fast detection of active menu with caching and optimizations"""
+    def find_active_menu(self, all_menus):
+        """
+        Find currently active menu based on conditions with optimized performance
+        
+        Args:
+            all_menus: Dictionary of menu definitions
+            
+        Returns:
+            str: ID of the active menu, or None if no menu is active
+        """
         if not all_menus:
             return None
         
@@ -282,10 +388,10 @@ class MenuConditionChecker:
 
 
 class AccessibleMenuNavigator:
-    """Main class for menu navigation with high-performance optimizations"""
+    """Main class for accessible menu navigation with performance optimizations"""
     
     def __init__(self):
-        """Initialize the navigator with performance optimizations"""
+        """Initialize the navigator with optimized structures and components"""
         self.menu_stack = []
         self.current_position = 0
         self.last_positions = {}
@@ -293,14 +399,14 @@ class AccessibleMenuNavigator:
         self.menus = {}
         self.verbose = False
         
-        # Group navigation - update this section
+        # Group navigation system
         self.current_group = "default"
         self.group_positions = {}  # Stores the position within each group
         self.menu_groups = {}      # Stores the groups for each menu
         self.menu_group_positions = {}  # Format: {menu_id: {group_name: position}}
         self.last_announced_group = None
         
-        # OCR setup
+        # OCR system
         self.reader = None  # Will be initialized when needed
         
         # OCR cache to avoid repeated recognition of the same region
@@ -314,12 +420,12 @@ class AccessibleMenuNavigator:
         self.menu_check_ongoing = False
         self.last_detected_menu = None
         
-        # Optimized thread management
+        # Thread management
         self.mouse_queue = queue.Queue()
         self.stop_requested = threading.Event()
         self.is_mouse_moving = threading.Event()
         
-        # Create a lightweight speech queue to prevent blocking
+        # Speech queue to prevent blocking
         self.speech_queue = queue.Queue()
         
         # Reduce CPU usage during navigation
@@ -329,7 +435,12 @@ class AccessibleMenuNavigator:
         self.shift_pressed = False
     
     def set_verbose(self, verbose):
-        """Set verbose mode"""
+        """
+        Enable or disable verbose logging mode
+        
+        Args:
+            verbose: Boolean indicating whether to enable verbose mode
+        """
         self.verbose = verbose
         self.condition_checker.set_verbose(verbose)
         if verbose:
@@ -337,8 +448,13 @@ class AccessibleMenuNavigator:
         else:
             logger.setLevel(logging.INFO)
     
-    def speak(self, message):
-        """Non-blocking speech with queue"""
+    def announce(self, message):
+        """
+        Queue a message to be spoken by screen reader (non-blocking)
+        
+        Args:
+            message: Text string to be spoken
+        """
         if not message:
             return
             
@@ -349,8 +465,8 @@ class AccessibleMenuNavigator:
         # Add to speech queue instead of blocking
         self.speech_queue.put(message)
     
-    def _speech_worker(self):
-        """Background thread for speech to avoid blocking UI navigation"""
+    def _speech_thread_worker(self):
+        """Background thread that processes speech queue to avoid blocking UI navigation"""
         while not self.stop_requested.is_set():
             try:
                 # Get message with timeout to allow checking stop_requested
@@ -360,50 +476,66 @@ class AccessibleMenuNavigator:
                     self.speaker.speak(message)
                 except Exception as speech_error:
                     # Log the error but continue operation
-                    self.log(f"Speech error: {speech_error}", logging.ERROR)
+                    self.log_message(f"Speech error: {speech_error}", logging.ERROR)
                     
                     # Try to reinitialize the speech engine
                     try:
                         self.speaker = ao.Auto()
-                        self.log("Reinitialized speech engine", logging.INFO)
+                        self.log_message("Reinitialized speech engine", logging.INFO)
                     except:
-                        self.log("Failed to reinitialize speech engine", logging.ERROR)
+                        self.log_message("Failed to reinitialize speech engine", logging.ERROR)
                 
                 self.speech_queue.task_done()
             except queue.Empty:
                 pass
     
-    def log(self, message, level=logging.INFO):
-        """Optimized logging"""
+    def log_message(self, message, level=logging.INFO):
+        """
+        Log a message with the specified level
+        
+        Args:
+            message: Text to log
+            level: Logging level (default: INFO)
+        """
         if level == logging.DEBUG and not self.verbose:
             return
         logger.log(level, message)
     
-    def init_ocr_reader(self, languages=None):
-        """Initialize the EasyOCR reader with specified languages"""
+    def initialize_ocr_reader(self, languages=None):
+        """
+        Initialize the EasyOCR reader for text recognition
+        
+        Args:
+            languages: List of language codes to recognize (default: ['en'])
+        """
         if self.reader is None:
             # Default to English if no languages specified
             if not languages:
                 languages = ['en']
                 
-            self.log(f"Initializing EasyOCR reader with languages: {languages}")
+            self.log_message(f"Initializing EasyOCR reader with languages: {languages}")
             self.reader = easyocr.Reader(languages)
-            self.log("EasyOCR reader initialized")
+            self.log_message("OCR reader initialized")
     
     def start(self, profile_path, languages=None):
-        """Start the navigator with optimized threading"""
-        self.log("Ready!")
-        # self.speak("Accessible Menu Navigation started")
+        """
+        Start the navigator with the specified profile
+        
+        Args:
+            profile_path: Path to menu profile JSON file
+            languages: List of language codes for OCR
+        """
+        self.log_message("Ready!")
         
         # Initialize OCR reader in the background
-        threading.Thread(target=self.init_ocr_reader, args=(languages,), daemon=True).start()
+        threading.Thread(target=self.initialize_ocr_reader, args=(languages,), daemon=True).start()
         
         self.last_menu_check = time.time()
         
         # Load menu profile
         if not os.path.exists(profile_path):
-            self.log(f"Profile '{profile_path}' not found, using default settings")
-            self.speak("Menu profile not found, using default settings")
+            self.log_message(f"Profile '{profile_path}' not found, using default settings")
+            self.announce("Menu profile not found, using default settings")
             
             # Create basic menu structure as fallback
             self.menus["main_menu"] = {
@@ -416,8 +548,8 @@ class AccessibleMenuNavigator:
         else:
             # Load the profile
             if not self.load_menu_profile(profile_path):
-                self.log("Failed to load menu profile, using default settings")
-                self.speak("Failed to load menu profile, using default settings")
+                self.log_message("Failed to load menu profile, using default settings")
+                self.announce("Failed to load menu profile, using default settings")
                 
                 # Create basic menu structure as fallback
                 self.menus["main_menu"] = {
@@ -429,9 +561,9 @@ class AccessibleMenuNavigator:
                 self.menu_stack = ["main_menu"]
         
         # Start worker threads
-        mouse_thread = threading.Thread(target=self._mouse_worker, daemon=True)
-        speech_thread = threading.Thread(target=self._speech_worker, daemon=True)
-        detection_thread = threading.Thread(target=self._menu_detection_worker, daemon=True)
+        mouse_thread = threading.Thread(target=self._mouse_thread_worker, daemon=True)
+        speech_thread = threading.Thread(target=self._speech_thread_worker, daemon=True)
+        detection_thread = threading.Thread(target=self._menu_detection_thread_worker, daemon=True)
         
         mouse_thread.start()
         speech_thread.start()
@@ -441,16 +573,16 @@ class AccessibleMenuNavigator:
         if self.menu_stack:
             current_menu = self.menu_stack[0]
             if current_menu in self.last_positions:
-                self.set_position(self.last_positions[current_menu])
+                self.set_current_position(self.last_positions[current_menu])
             else:
-                self.set_position(0)
+                self.set_current_position(0)
         
         try:
             # Set up keyboard listeners with separate listeners for press and release
             # This allows us to track modifier keys properly
             with keyboard.Listener(
-                on_press=self._on_key_press,
-                on_release=self._on_key_release
+                on_press=self._handle_key_press,
+                on_release=self._handle_key_release
             ) as listener:
                 listener.join()
         finally:
@@ -464,49 +596,57 @@ class AccessibleMenuNavigator:
             
             # No need for explicit MSS cleanup - instances are managed per thread
                 
-            self.log("Exiting")
+            self.log_message("Exiting")
     
     def load_menu_profile(self, filepath):
-        """Load a menu profile with optimized detection"""
+        """
+        Load menu profile from JSON file
+        
+        Args:
+            filepath: Path to the profile JSON file
+            
+        Returns:
+            bool: True if profile loaded successfully, False otherwise
+        """
         try:
             with open(filepath, 'r') as f:
                 self.menus = json.load(f)
             
-            self.log(f"Loaded profile with {len(self.menus)} menus")
+            self.log_message(f"Loaded profile with {len(self.menus)} menus")
         
             # Initialize with the first menu in the profile
             if self.menus:
                 try:
                     # Detect active menu
-                    active_menu = self.condition_checker.detect_active_menu(self.menus)
+                    active_menu = self.condition_checker.find_active_menu(self.menus)
                 
                     if active_menu:
                         self.menu_stack = [active_menu]
-                        self.log(f"Detected active menu: {active_menu}")
-                        self.speak(f"Menu profile loaded. Detected {active_menu.replace('-', ' ')} menu")
+                        self.log_message(f"Detected active menu: {active_menu}")
+                        self.announce(f"Menu profile loaded. Detected {active_menu.replace('-', ' ')} menu")
                     else:
                         # Default to first menu
                         first_menu = next(iter(self.menus))
                         self.menu_stack = [first_menu]
-                        self.speak(f"Menu profile loaded. Starting with {first_menu.replace('-', ' ')}")
+                        self.announce(f"Menu profile loaded. Starting with {first_menu.replace('-', ' ')}")
                 except Exception as detection_error:
                     # If detection fails, just use the first menu
-                    self.log(f"Menu detection failed: {detection_error}", logging.WARNING)
+                    self.log_message(f"Menu detection failed: {detection_error}", logging.WARNING)
                     first_menu = next(iter(self.menus))
                     self.menu_stack = [first_menu]
-                    self.speak(f"Menu profile loaded. Starting with {first_menu.replace('-', ' ')}")
+                    self.announce(f"Menu profile loaded. Starting with {first_menu.replace('-', ' ')}")
                 
                 return True
             else:
-                self.log("Loaded profile is empty", logging.WARNING)
+                self.log_message("Loaded profile is empty", logging.WARNING)
                 return False
                 
         except Exception as e:
-            self.log(f"Error loading menu profile: {e}", logging.ERROR)
+            self.log_message(f"Error loading menu profile: {e}", logging.ERROR)
             return False
     
-    def _mouse_worker(self):
-        """Optimized mouse worker thread"""
+    def _mouse_thread_worker(self):
+        """Background thread that processes mouse movement and click operations"""
         while not self.stop_requested.is_set():
             try:
                 # Get command with timeout to prevent blocking forever
@@ -518,15 +658,15 @@ class AccessibleMenuNavigator:
                 
                 # Process command
                 if command['type'] == 'move':
-                    self._set_cursor_position(command['end_pos'][0], command['end_pos'][1])
+                    self._move_cursor_to(command['end_pos'][0], command['end_pos'][1])
                 elif command['type'] == 'click':
-                    self._perform_click(command['position'][0], command['position'][1])
+                    self._click_at_position(command['position'][0], command['position'][1])
                 elif command['type'] == 'navigate':
-                    self._perform_navigation(command['direction'])
+                    self._navigate_in_direction(command['direction'])
                 elif command['type'] == 'select':
-                    self._perform_selection()
+                    self._select_current_item()
                 elif command['type'] == 'pop':
-                    self._perform_menu_pop()
+                    self._return_to_parent_menu()
                 
                 # Clear flags
                 self.pause_detection.clear()
@@ -539,11 +679,11 @@ class AccessibleMenuNavigator:
                 self.pause_detection.clear()
             except Exception as e:
                 # Error handling
-                self.log(f"Mouse worker error: {e}", logging.ERROR)
+                self.log_message(f"Mouse worker error: {e}", logging.ERROR)
                 self.is_mouse_moving.clear()
                 self.pause_detection.clear()
     
-    def _menu_detection_worker(self):
+    def _menu_detection_thread_worker(self):
         """Dedicated thread for menu detection to prevent UI blocking"""
         while not self.stop_requested.is_set():
             try:
@@ -562,11 +702,11 @@ class AccessibleMenuNavigator:
                 self.last_menu_check = current_time
                 
                 # Detect active menu
-                active_menu = self.condition_checker.detect_active_menu(self.menus)
+                active_menu = self.condition_checker.find_active_menu(self.menus)
                 
                 # Process result if we have one and it's different
                 if active_menu and (not self.menu_stack or active_menu != self.menu_stack[0]):
-                    self.log(f"Detected new active menu: {active_menu}")
+                    self.log_message(f"Detected new active menu: {active_menu}")
                     
                     old_menu = self.menu_stack[0] if self.menu_stack else None
                     
@@ -575,7 +715,7 @@ class AccessibleMenuNavigator:
                     if active_menu in self.menus:
                         # Get reset_index property (default True for backwards compatibility)
                         should_reset_index = self.menus[active_menu].get("reset_index", True)
-                        self.log(f"Menu '{active_menu}' has reset_index = {should_reset_index}")
+                        self.log_message(f"Menu '{active_menu}' has reset_index = {should_reset_index}")
                     
                     # Store the current position if we're going to maintain it
                     current_pos = 0
@@ -593,7 +733,7 @@ class AccessibleMenuNavigator:
                     
                     # Reset the menu group cache
                     if active_menu not in self.menu_groups:
-                        self.get_menu_groups(active_menu)
+                        self.get_unique_groups_in_menu(active_menu)
                     
                     # Get the group to reset to if specified
                     reset_group = self.menus[active_menu].get("reset_group", None)
@@ -603,28 +743,28 @@ class AccessibleMenuNavigator:
                         # Find a valid group to use (starting with the specified reset_group)
                         valid_group = self.find_valid_group(active_menu, reset_group)
                         self.current_group = valid_group
-                        self.log(f"Resetting index for menu: {active_menu} (was at position {old_pos})")
+                        self.log_message(f"Resetting index for menu: {active_menu} (was at position {old_pos})")
                         
                         # Navigate to the first item in the valid group
-                        group_items = self.get_group_items(active_menu, valid_group)
+                        group_items = self.get_items_in_group(active_menu, valid_group)
                         if group_items:
                             self.current_position = group_items[0]
-                            self.log(f"Resetting to group '{valid_group}' at position {self.current_position}")
+                            self.log_message(f"Resetting to group '{valid_group}' at position {self.current_position}")
                         else:
                             # If somehow still no items, set to position 0
                             self.current_position = 0
-                            self.log(f"No items in any group, defaulting to position 0")
+                            self.log_message(f"No items in any group, defaulting to position 0")
                     else:
                         # Keep the same group if it exists in the new menu
                         if old_menu:
                             # Check if the current group exists in this menu
                             old_group = self.current_group
-                            if old_group in self.get_menu_groups(active_menu):
+                            if old_group in self.get_unique_groups_in_menu(active_menu):
                                 # Keep the group
-                                self.log(f"Maintaining group '{old_group}' when switching menus")
+                                self.log_message(f"Maintaining group '{old_group}' when switching menus")
                                 
                                 # Get items in the group
-                                group_items = self.get_group_items(active_menu, old_group)
+                                group_items = self.get_items_in_group(active_menu, old_group)
                                 if group_items:
                                     # Try to position at the same index within the group
                                     group_position = 0
@@ -632,99 +772,135 @@ class AccessibleMenuNavigator:
                                         group_position = min(self.group_positions[old_group], len(group_items)-1)
                                     
                                     self.current_position = group_items[group_position]
-                                    self.log(f"Maintaining position {group_position} within group '{old_group}'")
+                                    self.log_message(f"Maintaining position {group_position} within group '{old_group}'")
                                     continue  # Skip the default position handling
                             
                         # Try to use the same position if it exists in the new menu
-                        items = self.get_current_menu_items()
+                        items = self.get_active_items_in_current_menu()
                         if items and current_pos < len(items):
                             self.current_position = current_pos
-                            self.log(f"Maintaining index {current_pos} for menu: {active_menu} (reset_index is {should_reset_index})")
+                            self.log_message(f"Maintaining index {current_pos} for menu: {active_menu} (reset_index is {should_reset_index})")
                         else:
                             # Find a valid group
                             valid_group = self.find_valid_group(active_menu)
                             self.current_group = valid_group
                             
                             # Get the first item in the valid group
-                            group_items = self.get_group_items(active_menu, valid_group)
+                            group_items = self.get_items_in_group(active_menu, valid_group)
                             if group_items:
                                 self.current_position = group_items[0]
                             else:
                                 # If somehow still no items, set to position 0
                                 self.current_position = 0
                     
-                    # Announce menu change but in a more streamlined way
-                    menu_name = active_menu.replace('-', ' ')
-                    # Don't announce the menu change since we already said what was selected
-                    
                     # Update cursor position
-                    details = self.get_item_details(active_menu, self.current_position)
+                    details = self.get_element_details(active_menu, self.current_position)
                     if details:
-                        self.enqueue_mouse_move(details['coordinates'])
-                        self.announce_item(details)
+                        self.queue_cursor_movement(details['coordinates'])
+                        self.announce_element(details)
                 
                 # Brief pause to reduce CPU usage
                 time.sleep(0.01)
                 
             except Exception as e:
-                self.log(f"Menu detection error: {e}", logging.ERROR)
+                self.log_message(f"Menu detection error: {e}", logging.ERROR)
                 time.sleep(0.1)  # Longer pause on error
 
     
     def find_valid_group(self, menu_id, preferred_group=None):
-        """Find a group that contains at least one element, preferring the specified group"""
+        """
+        Find a group that contains at least one element
+        
+        Args:
+            menu_id: Menu identifier
+            preferred_group: Preferred group to use if it has elements
+            
+        Returns:
+            str: Name of valid group
+        """
         if menu_id not in self.menus:
             # Get the first group if available, otherwise use empty string
-            all_groups = self.get_menu_groups(menu_id)
+            all_groups = self.get_unique_groups_in_menu(menu_id)
             return all_groups[0] if all_groups else ""
             
         # Get all groups in this menu
-        all_groups = self.get_menu_groups(menu_id)
+        all_groups = self.get_unique_groups_in_menu(menu_id)
         if not all_groups:
             return ""  # Return empty string if no groups exist
         
         # If preferred_group is specified, try it first
         if preferred_group and preferred_group in all_groups:
-            items = self.get_group_items(menu_id, preferred_group)
+            items = self.get_items_in_group(menu_id, preferred_group)
             if items:
                 return preferred_group
         
         # If preferred group is empty, not found, or not specified, try each group in order
         for group in all_groups:
-            items = self.get_group_items(menu_id, group)
+            items = self.get_items_in_group(menu_id, group)
             if items:
                 return group
                 
         # If no group has items, return the first group
         return all_groups[0]
 
-    def _set_cursor_position(self, x, y):
-        """Ultra-fast cursor positioning using ctypes"""
+    def _move_cursor_to(self, x, y):
+        """
+        Move cursor to specific coordinates using Windows API for speed
+        
+        Args:
+            x: X coordinate
+            y: Y coordinate
+        """
         ctypes.windll.user32.SetCursorPos(int(x), int(y))
     
-    def _perform_click(self, x, y):
-        """Optimized mouse click with minimal delay"""
-        self._set_cursor_position(x, y)
+    def _click_at_position(self, x, y):
+        """
+        Perform mouse click at specified coordinates
+        
+        Args:
+            x: X coordinate
+            y: Y coordinate
+        """
+        self._move_cursor_to(x, y)
         ctypes.windll.user32.mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
         time.sleep(0.01)  # Minimal delay
         ctypes.windll.user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
     
-    def enqueue_mouse_move(self, end_pos):
-        """Queue a mouse movement"""
+    def queue_cursor_movement(self, end_pos):
+        """
+        Add cursor movement to queue for processing by mouse thread
+        
+        Args:
+            end_pos: Tuple of (x, y) coordinates
+        """
         self.mouse_queue.put({
             'type': 'move',
             'end_pos': end_pos
         })
     
-    def enqueue_mouse_click(self, position):
-        """Queue a mouse click"""
+    def queue_mouse_click(self, position):
+        """
+        Add mouse click to queue for processing by mouse thread
+        
+        Args:
+            position: Tuple of (x, y) coordinates
+        """
         self.mouse_queue.put({
             'type': 'click',
             'position': position
         })
     
-    def perform_ocr(self, x1, y1, x2, y2):
-        """Perform OCR on a screen region using EasyOCR"""
+    def extract_text_from_region(self, x1, y1, x2, y2):
+        """
+        Perform OCR on a screen region to extract text
+        
+        Args:
+            x1, y1: Top-left coordinates
+            x2, y2: Bottom-right coordinates
+            
+        Returns:
+            str: Extracted text from the region
+        """
         try:
             # Check cache first
             cache_key = (x1, y1, x2, y2)
@@ -732,12 +908,12 @@ class AccessibleMenuNavigator:
             
             # If we have a valid cached result, use it
             if cache_key in self.ocr_cache and current_time - self.ocr_cache[cache_key]['time'] < self.ocr_cache_ttl:
-                self.log(f"Using cached OCR result for region ({x1},{y1},{x2},{y2})", logging.DEBUG)
+                self.log_message(f"Using cached OCR result for region ({x1},{y1},{x2},{y2})", logging.DEBUG)
                 return self.ocr_cache[cache_key]['text']
             
             # Initialize reader if needed
             if self.reader is None:
-                self.init_ocr_reader()
+                self.initialize_ocr_reader()
                 
             # Take a screenshot
             with mss.mss() as sct:
@@ -765,15 +941,24 @@ class AccessibleMenuNavigator:
                 'time': current_time
             }
             
-            self.log(f"OCR result for region ({x1},{y1},{x2},{y2}): '{ocr_text}'", logging.DEBUG)
+            self.log_message(f"OCR result for region ({x1},{y1},{x2},{y2}): '{ocr_text}'", logging.DEBUG)
             return ocr_text
             
         except Exception as e:
-            self.log(f"OCR error: {e}", logging.ERROR)
+            self.log_message(f"OCR error: {e}", logging.ERROR)
             return ""
     
-    def process_ocr_regions(self, menu_id, element_index):
-        """Process all OCR regions for a UI element"""
+    def get_ocr_text_for_element(self, menu_id, element_index):
+        """
+        Process all OCR regions for a UI element and return extracted text
+        
+        Args:
+            menu_id: Menu identifier
+            element_index: Index of element in the menu
+            
+        Returns:
+            dict: Dictionary of OCR region tags to extracted text
+        """
         if not self.menu_stack:
             return {}
             
@@ -802,13 +987,22 @@ class AccessibleMenuNavigator:
             y2 = region.get("y2", 0)
             
             # Perform OCR
-            text = self.perform_ocr(x1, y1, x2, y2)
+            text = self.extract_text_from_region(x1, y1, x2, y2)
             results[tag] = text
         
         return results
 
-    def check_element_conditions(self, element, screenshot=None):
-        """Check if an UI element's conditions are met"""
+    def is_element_active(self, element, screenshot=None):
+        """
+        Check if a UI element's conditions are met
+        
+        Args:
+            element: Element data
+            screenshot: Screenshot as numpy array (optional)
+            
+        Returns:
+            bool: True if element is active, False otherwise
+        """
         # If element has no conditions, it's always active
         if len(element) <= 9 or not element[9]:
             return True
@@ -819,33 +1013,38 @@ class AccessibleMenuNavigator:
             
         # Check each condition - all must be met for the element to be active
         for condition in element[9]:
-            if not self.condition_checker._check_condition_optimized(condition, screenshot):
+            if not self.condition_checker._check_condition(condition, screenshot):
                 return False
                 
         return True
     
-    def _perform_navigation(self, direction):
-        """Perform navigation in the given direction"""
+    def _navigate_in_direction(self, direction):
+        """
+        Navigate to next/previous item in the menu
+        
+        Args:
+            direction: 1 for next, -1 for previous
+        """
         if not self.menu_stack:
-            self.speak("No menu selected")
+            self.announce("No menu selected")
             return
         
         current_menu = self.menu_stack[-1]
         
         # Get items in the current group
-        group_items = self.get_group_items(current_menu, self.current_group)
+        group_items = self.get_items_in_group(current_menu, self.current_group)
         
         if not group_items:
-            self.log(f"No items in group '{self.current_group}' for menu '{current_menu}'", logging.WARNING)
+            self.log_message(f"No items in group '{self.current_group}' for menu '{current_menu}'", logging.WARNING)
             
             # Find a valid group
             valid_group = self.find_valid_group(current_menu, self.current_group)
             
             # If we found a different group with items, switch to it
             if valid_group != self.current_group:
-                self.log(f"Switching to group '{valid_group}' which has items", logging.INFO)
+                self.log_message(f"Switching to group '{valid_group}' which has items", logging.INFO)
                 self.current_group = valid_group
-                group_items = self.get_group_items(current_menu, valid_group)
+                group_items = self.get_items_in_group(current_menu, valid_group)
                 
                 if group_items:
                     # Get last saved position for this group in this menu
@@ -855,24 +1054,24 @@ class AccessibleMenuNavigator:
                         # Default to first item in group
                         self.current_position = group_items[0]
                     
-                    details = self.get_item_details(current_menu, self.current_position)
+                    details = self.get_element_details(current_menu, self.current_position)
                     if details:
-                        self.enqueue_mouse_move(details['coordinates'])
-                        self.announce_item(details)
+                        self.queue_cursor_movement(details['coordinates'])
+                        self.announce_element(details)
                         return
             
             # If we still have no items, check if there are any items at all
-            all_items = self.get_current_menu_items()
+            all_items = self.get_active_items_in_current_menu()
             if not all_items:
-                self.speak(f"No items available in this menu")
+                self.announce(f"No items available in this menu")
                 return
                 
             # If there are items but none in any group, use the first item
             self.current_position = 0
-            details = self.get_item_details(current_menu, self.current_position)
+            details = self.get_element_details(current_menu, self.current_position)
             if details:
-                self.enqueue_mouse_move(details['coordinates'])
-                self.announce_item(details)
+                self.queue_cursor_movement(details['coordinates'])
+                self.announce_element(details)
             return
         
         # Find the current item's position within the group
@@ -900,46 +1099,46 @@ class AccessibleMenuNavigator:
         
         # Get details and move mouse
         if current_menu:
-            details = self.get_item_details(current_menu, self.current_position)
+            details = self.get_element_details(current_menu, self.current_position)
             if details:
-                self.enqueue_mouse_move(details['coordinates'])
-                self.announce_item(details)
+                self.queue_cursor_movement(details['coordinates'])
+                self.announce_element(details)
             else:
-                self.speak("Item not found")
+                self.announce("Item not found")
         else:
-            self.speak("No menu selected")
+            self.announce("No menu selected")
     
-    def _perform_selection(self):
-        """Perform selection of the current item"""
+    def _select_current_item(self):
+        """Select the currently focused item"""
         if not self.menu_stack:
-            self.speak("No menu selected")
+            self.announce("No menu selected")
             return
             
-        items = self.get_current_menu_items()
+        items = self.get_active_items_in_current_menu()
         if not items:
-            self.speak("No items available")
+            self.announce("No items available")
             return
             
-        details = self.get_item_details(self.menu_stack[-1], self.current_position)
+        details = self.get_element_details(self.menu_stack[-1], self.current_position)
         if not details:
-            self.speak("Item not found")
+            self.announce("Item not found")
             return
         
         # Perform click
-        self.enqueue_mouse_click(details['coordinates'])
+        self.queue_mouse_click(details['coordinates'])
         
         # Simplified announcement
-        self.speak(f"{details['name']} selected")
+        self.announce(f"{details['name']} selected")
         
         # Store last position
         if self.menu_stack:
             self.last_positions[self.menu_stack[-1]] = self.current_position
     
-    def _perform_menu_pop(self):
-        """Pop menu from stack and return to previous menu"""
+    def _return_to_parent_menu(self):
+        """Pop current menu from stack and return to previous menu"""
         if len(self.menu_stack) <= 1:
             current_menu = self.menu_stack[0] if self.menu_stack else "No menu"
-            self.speak(f"{current_menu}")
+            self.announce(f"{current_menu}")
             return False
         
         # Store the name of the menu we're leaving
@@ -951,16 +1150,19 @@ class AccessibleMenuNavigator:
         # Restore last position in the parent menu
         parent_menu = self.menu_stack[-1]
         if parent_menu in self.last_positions:
-            self.set_position(self.last_positions[parent_menu])
+            self.set_current_position(self.last_positions[parent_menu])
         else:
-            self.set_position(0)
+            self.set_current_position(0)
         
-        # Announce menu exit
-        # self.speak(f"Exited submenu, returned to {parent_menu.replace('-', ' ')}")
         return True
     
-    def get_current_menu_items(self):
-        """Get items from current menu with minimal overhead, filtering by active conditions"""
+    def get_active_items_in_current_menu(self):
+        """
+        Get all active items from current menu, filtering by element conditions
+        
+        Returns:
+            list: Active menu items
+        """
         if not self.menu_stack:
             # If menu_stack is empty, use the first menu as default
             if self.menus:
@@ -993,14 +1195,23 @@ class AccessibleMenuNavigator:
         # Filter items based on their conditions
         active_items = []
         for item in all_items:
-            if self.check_element_conditions(item, screenshot):
+            if self.is_element_active(item, screenshot):
                 active_items.append(item)
                 
         return active_items
     
     @lru_cache(maxsize=128)
-    def get_item_details(self, menu_id, position):
-        """Get item details with caching for repeated calls"""
+    def get_element_details(self, menu_id, position):
+        """
+        Get detailed information about a menu element
+        
+        Args:
+            menu_id: Menu identifier
+            position: Index of element in the menu
+            
+        Returns:
+            dict: Element details or None if not found
+        """
         if menu_id not in self.menus:
             return None
             
@@ -1019,7 +1230,7 @@ class AccessibleMenuNavigator:
         item_group = item[5] if len(item) > 5 else "default"
         
         # Get all items in this group to calculate position within group
-        group_items = self.get_group_items(menu_id, item_group)
+        group_items = self.get_items_in_group(menu_id, item_group)
         
         # Find the index of this position within the group
         try:
@@ -1051,8 +1262,17 @@ class AccessibleMenuNavigator:
         }
 
     
-    def format_announcement(self, details, ocr_results={}):
-        """Format an announcement message using the template or defaults"""
+    def format_element_announcement(self, details, ocr_results={}):
+        """
+        Format announcement message for an element
+        
+        Args:
+            details: Element details dictionary
+            ocr_results: OCR text results for the element
+            
+        Returns:
+            str: Formatted announcement text
+        """
         # If no custom template, use default format
         if not details.get('custom_announcement'):
             # Default format: "{name}, {type}, {index}"
@@ -1083,50 +1303,69 @@ class AccessibleMenuNavigator:
         return result
 
     
-    def announce_item(self, details):
-        """Announce an item with enhanced formatting"""
+    def announce_element(self, details):
+        """
+        Announce an element with proper formatting
+        
+        Args:
+            details: Element details dictionary
+        """
         if not details:
-            self.speak("No item selected")
+            self.announce("No item selected")
             return
         
         # Process OCR regions if present
         ocr_results = {}
         if details.get('has_ocr'):
-            ocr_results = self.process_ocr_regions(self.menu_stack[-1], self.current_position)
+            ocr_results = self.get_ocr_text_for_element(self.menu_stack[-1], self.current_position)
         
         # Check if the group has changed since last announcement
         current_group = details['group']
         if current_group != self.last_announced_group:
             # Group has changed, announce the group name first (without "Group:" prefix)
-            self.speak(f"{current_group}")
+            self.announce(f"{current_group}")
             self.last_announced_group = current_group
         
         # Format the announcement
-        message = self.format_announcement(details, ocr_results)
-        self.speak(message)
+        message = self.format_element_announcement(details, ocr_results)
+        self.announce(message)
 
     
-    def set_position(self, position, announce=True):
-        """Set position within a menu"""
+    def set_current_position(self, position, announce=True):
+        """
+        Set current position within the menu
+        
+        Args:
+            position: Index of element to focus
+            announce: Whether to announce the element (default: True)
+        """
         if not self.menu_stack:
-            self.speak("No menu selected")
+            self.announce("No menu selected")
             return
             
         self.current_position = position
         
-        details = self.get_item_details(self.menu_stack[-1], position)
+        details = self.get_element_details(self.menu_stack[-1], position)
         if details:
-            self.enqueue_mouse_move(details['coordinates'])
+            self.queue_cursor_movement(details['coordinates'])
             if announce:
                 # Check if group changed
                 if details['group'] != self.current_group:
                     self.current_group = details['group']
-                self.announce_item(details)
+                self.announce_element(details)
         else:
-            self.speak("Item not found")
+            self.announce("Item not found")
     
-    def get_menu_groups(self, menu_id):
-        """Get all unique groups in a menu"""
+    def get_unique_groups_in_menu(self, menu_id):
+        """
+        Get all unique groups in a menu
+        
+        Args:
+            menu_id: Menu identifier
+            
+        Returns:
+            list: List of group names, sorted
+        """
         if menu_id not in self.menus:
             return []  # Return empty list instead of ["default"]
             
@@ -1153,9 +1392,18 @@ class AccessibleMenuNavigator:
         
         return sorted_groups
     
-    def get_next_group(self, current_group, menu_id):
-        """Get the next group in the menu"""
-        groups = self.get_menu_groups(menu_id)
+    def get_next_group_in_menu(self, current_group, menu_id):
+        """
+        Get the next group in the menu
+        
+        Args:
+            current_group: Current group name
+            menu_id: Menu identifier
+            
+        Returns:
+            str: Name of next group
+        """
+        groups = self.get_unique_groups_in_menu(menu_id)
         if not groups:
             return "default"
             
@@ -1167,9 +1415,18 @@ class AccessibleMenuNavigator:
             # Current group not found, return first group
             return groups[0]
     
-    def get_prev_group(self, current_group, menu_id):
-        """Get the previous group in the menu"""
-        groups = self.get_menu_groups(menu_id)
+    def get_previous_group_in_menu(self, current_group, menu_id):
+        """
+        Get the previous group in the menu
+        
+        Args:
+            current_group: Current group name
+            menu_id: Menu identifier
+            
+        Returns:
+            str: Name of previous group
+        """
+        groups = self.get_unique_groups_in_menu(menu_id)
         if not groups:
             return "default"
             
@@ -1181,48 +1438,57 @@ class AccessibleMenuNavigator:
             # Current group not found, return first group
             return groups[0]
         
-    def navigate_to_group(self, group, announce=True):
-        """Navigate to a specific group"""
+    def navigate_to_group_by_name(self, group, announce=True):
+        """
+        Navigate to a specific group by name
+        
+        Args:
+            group: Group name to navigate to
+            announce: Whether to announce the element (default: True)
+            
+        Returns:
+            bool: True if navigation successful, False otherwise
+        """
         if not self.menu_stack:
             return False
             
         menu_id = self.menu_stack[-1]
-        items = self.get_group_items(menu_id, group)
+        items = self.get_items_in_group(menu_id, group)
         
         if not items:
             # Look for a different group that has items
-            self.log(f"No items found in group '{group}' for menu '{menu_id}', looking for alternative", logging.WARNING)
+            self.log_message(f"No items found in group '{group}' for menu '{menu_id}', looking for alternative", logging.WARNING)
             
-            all_groups = self.get_menu_groups(menu_id)
+            all_groups = self.get_unique_groups_in_menu(menu_id)
             alternative_group = None
             
             # Try to find any group with items
             for g in all_groups:
                 if g != group:  # Skip the original group
-                    group_items = self.get_group_items(menu_id, g)
+                    group_items = self.get_items_in_group(menu_id, g)
                     if group_items:
                         alternative_group = g
                         break
             
             if alternative_group:
-                self.log(f"Found alternative group '{alternative_group}' with items", logging.INFO)
+                self.log_message(f"Found alternative group '{alternative_group}' with items", logging.INFO)
                 group = alternative_group
-                items = self.get_group_items(menu_id, group)
+                items = self.get_items_in_group(menu_id, group)
             else:
-                self.log(f"No groups with items found in menu '{menu_id}'", logging.WARNING)
+                self.log_message(f"No groups with items found in menu '{menu_id}'", logging.WARNING)
                 # Check if there are any items at all
-                all_items = self.get_current_menu_items()
+                all_items = self.get_active_items_in_current_menu()
                 if not all_items:
-                    self.speak(f"No items available in this menu")
+                    self.announce(f"No items available in this menu")
                     return False
                 
                 # If there are items but none in any group, use position 0
                 self.current_position = 0
-                details = self.get_item_details(menu_id, 0)
+                details = self.get_element_details(menu_id, 0)
                 if details:
-                    self.enqueue_mouse_move(details['coordinates'])
+                    self.queue_cursor_movement(details['coordinates'])
                     if announce:
-                        self.announce_item(details)
+                        self.announce_element(details)
                 return True
         
         # Save current position in current group and menu
@@ -1253,22 +1519,31 @@ class AccessibleMenuNavigator:
                 position = items[0]
         
         # Set position
-        self.set_position(position, announce=announce)
+        self.set_current_position(position, announce=announce)
         
         # Update last_announced_group to prevent duplicate announcement
         self.last_announced_group = group
         
         return True
     
-    def get_group_items(self, menu_id, group):
-        """Get indices of items in a specific group, considering element conditions"""
+    def get_items_in_group(self, menu_id, group):
+        """
+        Get indices of items in a specific group
+        
+        Args:
+            menu_id: Menu identifier
+            group: Group name
+            
+        Returns:
+            list: List of item indices in the group
+        """
         if menu_id not in self.menus:
-            self.log(f"Menu '{menu_id}' not found when looking for group '{group}' items", logging.WARNING)
+            self.log_message(f"Menu '{menu_id}' not found when looking for group '{group}' items", logging.WARNING)
             return []
             
         items = self.menus[menu_id].get("items", [])
         if not items:
-            self.log(f"Menu '{menu_id}' has no items when looking for group '{group}'", logging.WARNING)
+            self.log_message(f"Menu '{menu_id}' has no items when looking for group '{group}'", logging.WARNING)
             return []
             
         # Check if we need to filter items based on conditions
@@ -1297,14 +1572,22 @@ class AccessibleMenuNavigator:
             if len(item) > 5 and item[5]:
                 item_group = item[5]
                 
-            if item_group == group and self.check_element_conditions(item, screenshot):
+            if item_group == group and self.is_element_active(item, screenshot):
                 group_indices.append(i)
                 
         # Sort by index field if available
         return sorted(group_indices, key=lambda idx: items[idx][8] if len(items[idx]) > 8 else 0)
 
-    def get_menu_groups(self, menu_id):
-        """Get all unique groups in a menu, sorted by their lowest element index"""
+    def get_unique_groups_sorted(self, menu_id):
+        """
+        Get all unique groups in a menu, sorted by their lowest element index
+        
+        Args:
+            menu_id: Menu identifier
+            
+        Returns:
+            list: List of group names, sorted by lowest index
+        """
         if menu_id not in self.menus:
             return ["default"]
             
@@ -1318,7 +1601,7 @@ class AccessibleMenuNavigator:
         
         for item in items:
             # Check if item is active based on conditions
-            if len(item) > 9 and item[9] and not self.check_element_conditions(item):
+            if len(item) > 9 and item[9] and not self.is_element_active(item):
                 continue  # Skip inactive items
                 
             # Get item group and index
@@ -1345,18 +1628,18 @@ class AccessibleMenuNavigator:
         
         return sorted_groups
     
-    def navigate_to_next_group(self):
-        """Navigate to the next group with items"""
+    def navigate_to_next_group_with_items(self):
+        """Navigate to next group that contains items"""
         if not self.menu_stack:
-            self.speak("No menu selected")
+            self.announce("No menu selected")
             return
             
         menu_id = self.menu_stack[-1]
         
         # Get all groups
-        all_groups = self.get_menu_groups(menu_id)
+        all_groups = self.get_unique_groups_in_menu(menu_id)
         if not all_groups:
-            self.speak("No groups available")
+            self.announce("No groups available")
             return
             
         # If current group isn't in the list, use the first one
@@ -1377,28 +1660,28 @@ class AccessibleMenuNavigator:
                 continue
                 
             # Check if this group has items
-            items = self.get_group_items(menu_id, next_group)
+            items = self.get_items_in_group(menu_id, next_group)
             if items:
                 # Found a group with items
-                if self.navigate_to_group(next_group):
+                if self.navigate_to_group_by_name(next_group):
                     # Don't announce the group name here, it will be announced in navigate_to_group
                     return
         
         # If we get here, no other group has items
-        self.speak(f"No other groups with items available")
+        self.announce(f"No other groups with items available")
     
-    def navigate_to_prev_group(self):
-        """Navigate to the previous group with items"""
+    def navigate_to_previous_group_with_items(self):
+        """Navigate to previous group that contains items"""
         if not self.menu_stack:
-            self.speak("No menu selected")
+            self.announce("No menu selected")
             return
             
         menu_id = self.menu_stack[-1]
         
         # Get all groups
-        all_groups = self.get_menu_groups(menu_id)
+        all_groups = self.get_unique_groups_in_menu(menu_id)
         if not all_groups:
-            self.speak("No groups available")
+            self.announce("No groups available")
             return
             
         # If current group isn't in the list, use the first one
@@ -1419,32 +1702,37 @@ class AccessibleMenuNavigator:
                 continue
                 
             # Check if this group has items
-            items = self.get_group_items(menu_id, prev_group)
+            items = self.get_items_in_group(menu_id, prev_group)
             if items:
                 # Found a group with items
-                if self.navigate_to_group(prev_group):
+                if self.navigate_to_group_by_name(prev_group):
                     # Don't announce the group name here, it will be announced in navigate_to_group
                     return
         
         # If we get here, no other group has items
-        self.speak(f"No other groups with items available")
+        self.announce(f"No other groups with items available")
         
         return True
     
-    def check_for_menu_change(self):
-        """Check for menu changes - now handles group positions better"""
+    def detect_menu_changes(self):
+        """
+        Check for menu changes with improved group handling
+        
+        Returns:
+            bool: True if menu changed, False otherwise
+        """
         # Just return the result of the last check from the detection thread
         current_time = time.time()
         
         # If it's been too long since our last check, force one now
         if current_time - self.last_menu_check > self.menu_check_interval * 3:
             # Direct check
-            active_menu = self.condition_checker.detect_active_menu(self.menus)
+            active_menu = self.condition_checker.find_active_menu(self.menus)
             self.last_menu_check = current_time
             
             # Process if we have a new menu
             if active_menu and (not self.menu_stack or active_menu != self.menu_stack[0]):
-                self.log(f"Force detected new menu: {active_menu}")
+                self.log_message(f"Force detected new menu: {active_menu}")
                 old_menu = self.menu_stack[0] if self.menu_stack else None
                 self.menu_stack = [active_menu]
                 
@@ -1460,7 +1748,7 @@ class AccessibleMenuNavigator:
                     self.current_position = self.menu_group_positions[active_menu][valid_group]
                 else:
                     # Use position 0 in the specific group
-                    group_items = self.get_group_items(active_menu, valid_group)
+                    group_items = self.get_items_in_group(active_menu, valid_group)
                     if group_items:
                         self.current_position = group_items[0]
                     else:
@@ -1470,8 +1758,16 @@ class AccessibleMenuNavigator:
         
         return False
     
-    def _on_key_press(self, key):
-        """Handle key press events"""
+    def _handle_key_press(self, key):
+        """
+        Handle keyboard key press events
+        
+        Args:
+            key: Key object from pynput
+            
+        Returns:
+            bool: False to stop listening, True to continue
+        """
         try:
             # Track shift key state
             if key == keyboard.Key.shift:
@@ -1492,10 +1788,10 @@ class AccessibleMenuNavigator:
                 # Check if shift is pressed using our tracked state
                 if self.shift_pressed:
                     # Previous group
-                    self.navigate_to_prev_group()
+                    self.navigate_to_previous_group_with_items()
                 else:
                     # Next group
-                    self.navigate_to_next_group()
+                    self.navigate_to_next_group_with_items()
             elif key == keyboard.Key.space:
                 self.mouse_queue.put({
                     'type': 'select'
@@ -1509,7 +1805,7 @@ class AccessibleMenuNavigator:
                 # Otherwise, exit if pressed again
                 elif len(self.menu_stack) <= 1:
                     # Exit on double-esc
-                    self.log("Exiting menu navigation")
+                    self.log_message("Exiting menu navigation")
                     return False
             elif key == keyboard.Key.left:
                 # Go back to parent menu if in a submenu
@@ -1520,24 +1816,32 @@ class AccessibleMenuNavigator:
             elif key == keyboard.Key.right:
                 # If current item has a submenu, select it
                 if self.menu_stack:
-                    details = self.get_item_details(self.menu_stack[-1], self.current_position)
+                    details = self.get_element_details(self.menu_stack[-1], self.current_position)
                     if details and details['has_submenu']:
                         self.mouse_queue.put({
                             'type': 'select'
                         })
         except Exception as e:
-            self.log(f"Error during key handling: {e}", logging.ERROR)
+            self.log_message(f"Error during key handling: {e}", logging.ERROR)
         
         return True
     
-    def _on_key_release(self, key):
-        """Handle key release events"""
+    def _handle_key_release(self, key):
+        """
+        Handle keyboard key release events
+        
+        Args:
+            key: Key object from pynput
+            
+        Returns:
+            bool: False to stop listening, True to continue
+        """
         try:
             # Track shift key state
             if key == keyboard.Key.shift:
                 self.shift_pressed = False
         except Exception as e:
-            self.log(f"Error during key release handling: {e}", logging.ERROR)
+            self.log_message(f"Error during key release handling: {e}", logging.ERROR)
         
         return True
 
