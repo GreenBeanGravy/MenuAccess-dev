@@ -1140,17 +1140,18 @@ class RegionImageConditionDialog(wx.Dialog):
 
 
 class OCRRegionDialog(wx.Dialog):
-    """Dialog for creating/editing an OCR region"""
+    """Dialog for creating/editing an OCR region with conditions support"""
     
     def __init__(self, parent, title="Add OCR Region", ocr_region=None):
-        super().__init__(parent, title=title, size=(500, 400))
+        super().__init__(parent, title=title, size=(500, 550))  # Increased height for conditions
         
         self.ocr_region = ocr_region or {
             "x1": 0,
             "y1": 0,
             "x2": 100,
             "y2": 100,
-            "tag": "ocr1"
+            "tag": "ocr1",
+            "conditions": []  # Initialize conditions list
         }
         
         # Initialize selection variables
@@ -1202,10 +1203,6 @@ class OCRRegionDialog(wx.Dialog):
         br_sizer.Add(y2_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
         br_sizer.Add(self.y2_ctrl, proportion=1)
         
-        # Select region button
-        self.region_btn = wx.Button(panel, label="Select Region on Screen")
-        self.region_btn.Bind(wx.EVT_BUTTON, self.on_select_region)
-        
         # Tag field
         tag_sizer = wx.BoxSizer(wx.HORIZONTAL)
         tag_label = wx.StaticText(panel, label="OCR Tag:")
@@ -1215,6 +1212,10 @@ class OCRRegionDialog(wx.Dialog):
         tag_sizer.Add(tag_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=8)
         tag_sizer.Add(self.tag_ctrl, proportion=1, flag=wx.RIGHT, border=8)
         tag_sizer.Add(tag_help, flag=wx.ALIGN_CENTER_VERTICAL)
+        
+        # Select region button
+        self.region_btn = wx.Button(panel, label="Select Region on Screen")
+        self.region_btn.Bind(wx.EVT_BUTTON, self.on_select_region)
         
         # Add to coordinate sizer
         coord_sizer.Add(tl_sizer, flag=wx.EXPAND | wx.ALL, border=5)
@@ -1235,6 +1236,44 @@ class OCRRegionDialog(wx.Dialog):
         # Add to main sizer
         vbox.Add(preview_sizer, flag=wx.EXPAND | wx.ALL, border=10)
         
+        # NEW: Conditions section
+        conditions_box = wx.StaticBox(panel, label="OCR Activation Conditions")
+        conditions_sizer = wx.StaticBoxSizer(conditions_box, wx.VERTICAL)
+        
+        # Conditions list
+        self.conditions_list = wx.ListCtrl(panel, style=wx.LC_REPORT, size=(-1, 100))
+        self.conditions_list.InsertColumn(0, "Type", width=120)
+        self.conditions_list.InsertColumn(1, "Details", width=250)
+        
+        # Populate conditions list
+        self.update_conditions_list()
+        
+        # Condition buttons
+        btn_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        
+        add_pixel_btn = wx.Button(panel, label="Add Pixel Color")
+        add_pixel_btn.Bind(wx.EVT_BUTTON, self.on_add_pixel_condition)
+        btn_sizer.Add(add_pixel_btn, flag=wx.RIGHT, border=5)
+        
+        add_region_btn = wx.Button(panel, label="Add Region Color")
+        add_region_btn.Bind(wx.EVT_BUTTON, self.on_add_region_condition)
+        btn_sizer.Add(add_region_btn, flag=wx.RIGHT, border=5)
+        
+        delete_condition_btn = wx.Button(panel, label="Delete")
+        delete_condition_btn.Bind(wx.EVT_BUTTON, self.on_delete_condition)
+        btn_sizer.Add(delete_condition_btn)
+        
+        # Help text
+        help_text = wx.StaticText(panel, label="OCR will only be performed when all conditions are met.")
+        
+        # Add to conditions section
+        conditions_sizer.Add(self.conditions_list, flag=wx.EXPAND | wx.ALL, border=5)
+        conditions_sizer.Add(btn_sizer, flag=wx.EXPAND | wx.ALL, border=5)
+        conditions_sizer.Add(help_text, flag=wx.EXPAND | wx.ALL, border=5)
+        
+        # Add to main sizer
+        vbox.Add(conditions_sizer, flag=wx.EXPAND | wx.ALL, border=10)
+        
         # Buttons
         button_box = wx.BoxSizer(wx.HORIZONTAL)
         ok_button = wx.Button(panel, wx.ID_OK, "OK")
@@ -1248,6 +1287,77 @@ class OCRRegionDialog(wx.Dialog):
         # Bind close event
         self.Bind(wx.EVT_CLOSE, self.on_close)
         
+    def update_conditions_list(self):
+        """Update the conditions list with current data"""
+        self.conditions_list.DeleteAllItems()
+        
+        if "conditions" not in self.ocr_region or not self.ocr_region["conditions"]:
+            return
+            
+        for i, condition in enumerate(self.ocr_region["conditions"]):
+            condition_type = condition.get("type", "unknown")
+            
+            if condition_type == "pixel_color":
+                details = f"({condition['x']}, {condition['y']}) = RGB{condition['color']} +/-{condition['tolerance']}"
+            elif condition_type == "pixel_region_color":
+                details = f"Region ({condition['x1']}, {condition['y1']}) to ({condition['x2']}, {condition['y2']}), " \
+                          f"RGB{condition['color']} +/-{condition['tolerance']}, thresh={condition['threshold']}"
+            else:
+                details = str(condition)
+            
+            idx = self.conditions_list.InsertItem(i, condition_type)
+            self.conditions_list.SetItem(idx, 1, details)
+    
+    def on_add_pixel_condition(self, event):
+        """Add a new pixel color condition"""
+        from pflib.dialogs import PixelColorConditionDialog
+        
+        dialog = PixelColorConditionDialog(self)
+        if dialog.ShowModal() == wx.ID_OK:
+            condition = dialog.get_condition()
+            
+            if "conditions" not in self.ocr_region:
+                self.ocr_region["conditions"] = []
+                
+            self.ocr_region["conditions"].append(condition)
+            self.update_conditions_list()
+            
+        dialog.Destroy()
+    
+    def on_add_region_condition(self, event):
+        """Add a new region color condition"""
+        from pflib.dialogs import RegionColorConditionDialog
+        
+        dialog = RegionColorConditionDialog(self)
+        if dialog.ShowModal() == wx.ID_OK:
+            condition = dialog.get_condition()
+            
+            if "conditions" not in self.ocr_region:
+                self.ocr_region["conditions"] = []
+                
+            self.ocr_region["conditions"].append(condition)
+            self.update_conditions_list()
+            
+        dialog.Destroy()
+    
+    def on_delete_condition(self, event):
+        """Delete the selected condition"""
+        selected = self.conditions_list.GetFirstSelected()
+        if selected == -1:
+            return
+        
+        if "conditions" not in self.ocr_region:
+            return
+            
+        # Confirm deletion
+        if wx.MessageBox("Are you sure you want to delete this condition?", 
+                         "Confirm", wx.YES_NO | wx.ICON_QUESTION) != wx.YES:
+            return
+            
+        # Delete the condition
+        del self.ocr_region["conditions"][selected]
+        self.update_conditions_list()
+    
     def on_close(self, event):
         """Ensure tracker is stopped when dialog closes"""
         if self.cursor_tracker.is_active:
@@ -1451,6 +1561,7 @@ class OCRRegionDialog(wx.Dialog):
             "x2": self.x2_ctrl.GetValue(),
             "y2": self.y2_ctrl.GetValue(),
             "tag": self.tag_ctrl.GetValue() or "ocr1"
+            # conditions are updated directly when added/removed
         })
         return self.ocr_region
 
@@ -1795,6 +1906,11 @@ class UIElementDialog(wx.Dialog):
         for i, region in enumerate(ocr_regions):
             tag = region.get("tag", f"ocr{i+1}")
             region_text = f"({region.get('x1', 0)}, {region.get('y1', 0)}) to ({region.get('x2', 0)}, {region.get('y2', 0)})"
+            
+            # Add condition count if present
+            condition_count = len(region.get("conditions", []))
+            if condition_count > 0:
+                region_text += f" [{condition_count} conditions]"
             
             idx = self.ocr_list.InsertItem(i, tag)
             self.ocr_list.SetItem(idx, 1, region_text)

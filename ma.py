@@ -1,5 +1,5 @@
 """
-MenuAccess main script
+MenuAccess main script with improved OCR condition handling and debug mode
 """
 
 import ctypes
@@ -22,9 +22,10 @@ from functools import lru_cache
 import easyocr
 import base64
 import io
+import re
 
 # Setup logging with faster string formatting
-logging.basicConfig(level=logging.INFO, format='%(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("AccessibleMenuNav")
 
 # Windows constants for mouse_event
@@ -153,81 +154,97 @@ class MenuConditionChecker:
                 tolerance = condition.get("tolerance", 0)
                 threshold = condition.get("threshold", 0.5)
                 
+                # Improved region sampling approach
+                region_width = x2 - x1
+                region_height = y2 - y1
+                region_size = region_width * region_height
+                
                 # Get cached sampling positions or create new ones
                 cache_key = (x1, y1, x2, y2)
                 if cache_key in self._sample_positions:
                     sample_points = self._sample_positions[cache_key]
                 else:
-                    # Instead of processing the entire region, take samples
-                    # For large regions, use adaptive sampling grid
-                    if (x2 - x1) * (y2 - y1) > 10000:  # Large region (100x100)
-                        # Use sparse grid sampling (16 points)
-                        cols = min(4, max(2, (x2 - x1) // 50))
-                        rows = min(4, max(2, (y2 - y1) // 50))
+                    # Adaptive sampling based on region size
+                    if region_size > 40000:  # Large region (200x200+)
+                        # Sparse grid sampling
+                        sample_count = min(25, max(9, region_size // 4000))
+                        grid_size = int(np.sqrt(sample_count))
                         
-                        x_step = (x2 - x1) / cols
-                        y_step = (y2 - y1) / rows
+                        x_step = region_width / grid_size
+                        y_step = region_height / grid_size
                         
                         sample_points = []
-                        for i in range(cols):
-                            for j in range(rows):
-                                px = int(x1 + i * x_step + x_step/2)
-                                py = int(y1 + j * y_step + y_step/2)
+                        for i in range(grid_size):
+                            for j in range(grid_size):
+                                px = int(x1 + (i + 0.5) * x_step)
+                                py = int(y1 + (j + 0.5) * y_step)
                                 sample_points.append((px, py))
-                    else:
-                        # For smaller regions, use 5 strategic points
+                    elif region_size > 10000:  # Medium region
+                        # Use 9 strategic points
+                        x_step = region_width / 3
+                        y_step = region_height / 3
+                        
+                        sample_points = []
+                        for i in range(3):
+                            for j in range(3):
+                                px = int(x1 + (i + 0.5) * x_step)
+                                py = int(y1 + (j + 0.5) * y_step)
+                                sample_points.append((px, py))
+                    else:  # Small region
+                        # Use 5 strategic points
                         sample_points = [
-                            (x1, y1),                  # Top-left
-                            (x1, y2-1),                # Bottom-left
-                            (x2-1, y1),                # Top-right
-                            (x2-1, y2-1),              # Bottom-right
-                            ((x1+x2)//2, (y1+y2)//2)   # Center
+                            (x1, y1),                     # Top-left
+                            (x2-1, y1),                   # Top-right
+                            ((x1+x2)//2, (y1+y2)//2),     # Center
+                            (x1, y2-1),                   # Bottom-left
+                            (x2-1, y2-1)                  # Bottom-right
                         ]
                     
                     self._sample_positions[cache_key] = sample_points
                 
-                # Optimized tolerance check
-                adj_tolerance = tolerance * 3  # Adjusted for Manhattan distance
-                
-                # Count matches using fast point sampling
+                # Calculate similarity for each sample point
                 matches = 0
-                for x, y in sample_points:
+                for px, py in sample_points:
                     try:
-                        pixel = screenshot_pil.getpixel((x, y))
-                        # Convert to HSV for better color comparison
-                        pixel_rgb_cv = np.array([[pixel]], dtype=np.uint8)
+                        # Get color at this point
+                        pixel_color = screenshot_pil.getpixel((px, py))
+                        
+                        # Convert to compatible numpy array format
+                        pixel_rgb_cv = np.array([[pixel_color]], dtype=np.uint8)
                         expected_rgb_cv = np.array([[expected_color]], dtype=np.uint8)
                         
                         # Convert RGB to HSV
                         pixel_hsv = cv2.cvtColor(pixel_rgb_cv, cv2.COLOR_RGB2HSV)[0][0]
                         expected_hsv = cv2.cvtColor(expected_rgb_cv, cv2.COLOR_RGB2HSV)[0][0]
                         
-                        # Convert to float to avoid overflow
-                        h1 = float(pixel_hsv[0])
-                        h2 = float(expected_hsv[0])
-                        s1 = float(pixel_hsv[1])
-                        s2 = float(expected_hsv[1])
-                        v1 = float(pixel_hsv[2])
-                        v2 = float(expected_hsv[2])
+                        # Calculate HSV differences
+                        h1, s1, v1 = pixel_hsv.astype(float)
+                        h2, s2, v2 = expected_hsv.astype(float)
                         
-                        # Calculate weighted HSV difference
-                        h_diff = min(abs(h1 - h2), 180.0 - abs(h1 - h2))
-                        s_diff = abs(s1 - s2)
-                        v_diff = abs(v1 - v2)
+                        # Handle hue wrapping
+                        h_diff = min(abs(h1 - h2), 180 - abs(h1 - h2))
                         
                         # Weight hue more than saturation and value for better color detection
-                        diff = (h_diff * 2.0) + (s_diff / 2.0) + (v_diff / 4.0)
-                               
-                        if diff <= adj_tolerance:
+                        weighted_diff = (h_diff * 2.0) + (abs(s1 - s2) / 2.0) + (abs(v1 - v2) / 4.0)
+                        
+                        if weighted_diff <= tolerance:
                             matches += 1
                     except:
+                        # Skip any errors (e.g., out of bounds)
                         pass
                 
                 # Calculate match percentage
                 match_percentage = matches / len(sample_points)
-                return match_percentage >= threshold
+                result = match_percentage >= threshold
                 
-            except:
+                if self.verbose:
+                    logger.debug(f"Region ({x1},{y1}) to ({x2},{y2}): match={match_percentage:.2f}, threshold={threshold}")
+                
+                return result
+                
+            except Exception as e:
+                if self.verbose:
+                    logger.error(f"Region color check error: {str(e)}")
                 return False
                 
         elif condition_type == "pixel_region_image":
@@ -398,6 +415,7 @@ class AccessibleMenuNavigator:
         self.speaker = ao.Auto()
         self.menus = {}
         self.verbose = False
+        self.debug = False
         
         # Group navigation system
         self.current_group = "default"
@@ -411,7 +429,7 @@ class AccessibleMenuNavigator:
         
         # OCR cache to avoid repeated recognition of the same region
         self.ocr_cache = {}
-        self.ocr_cache_ttl = 10.0  # OCR cache valid for 10 seconds
+        self.ocr_cache_ttl = 5.0  # OCR cache valid for 5 seconds (reduced from 10)
         
         # Performance optimizations
         self.condition_checker = MenuConditionChecker()
@@ -447,6 +465,15 @@ class AccessibleMenuNavigator:
             logger.setLevel(logging.DEBUG)
         else:
             logger.setLevel(logging.INFO)
+    
+    def set_debug(self, debug):
+        """
+        Enable or disable debug logging mode
+        
+        Args:
+            debug: Boolean indicating whether to enable debug mode
+        """
+        self.debug = debug
     
     def announce(self, message):
         """
@@ -497,7 +524,7 @@ class AccessibleMenuNavigator:
             message: Text to log
             level: Logging level (default: INFO)
         """
-        if level == logging.DEBUG and not self.verbose:
+        if level == logging.DEBUG and not (self.verbose or self.debug):
             return
         logger.log(level, message)
     
@@ -805,7 +832,311 @@ class AccessibleMenuNavigator:
             except Exception as e:
                 self.log_message(f"Menu detection error: {e}", logging.ERROR)
                 time.sleep(0.1)  # Longer pause on error
+    
+    def is_ocr_region_active(self, ocr_region, screenshot=None):
+        """
+        Check if an OCR region's conditions are met
+        
+        Args:
+            ocr_region: OCR region data with potential conditions
+            screenshot: Screenshot as numpy array (optional)
+            
+        Returns:
+            bool: True if region is active (all conditions met), False otherwise
+        """
+        # If region has no conditions, it's always active
+        if "conditions" not in ocr_region or not ocr_region["conditions"]:
+            return True
+            
+        # Take a screenshot if not provided
+        if screenshot is None:
+            screenshot = np.array(pyautogui.screenshot())
+        
+        # Convert PIL screenshot to numpy array if needed
+        if isinstance(screenshot, Image.Image):
+            screenshot = np.array(screenshot)
+            
+        # Check each condition - all must be met for the region to be active
+        for condition in ocr_region["conditions"]:
+            # Directly check condition rather than using the condition checker's wrapper
+            condition_type = condition.get("type", "unknown")
+            
+            if condition_type == "pixel_color":
+                x = condition.get("x", 0)
+                y = condition.get("y", 0)
+                expected_color = condition.get("color", [0, 0, 0])
+                tolerance = condition.get("tolerance", 0)
+                
+                # Get the pixel color (BGR by default)
+                try:
+                    if y >= screenshot.shape[0] or x >= screenshot.shape[1]:
+                        self.log_message(f"OCR condition pixel position ({x},{y}) out of bounds", logging.DEBUG)
+                        return False
+                        
+                    pixel_color = screenshot[y, x]
+                    # Convert BGR to RGB if it's a 3-channel image
+                    if len(pixel_color) == 3:
+                        pixel_color = pixel_color[::-1]  # Reverse order for BGR to RGB
+                    
+                    # Calculate simple color distance
+                    diff = sum(abs(a - b) for a, b in zip(pixel_color, expected_color))
+                    
+                    # Check if within tolerance
+                    if diff > tolerance * 3:  # Multiply by 3 for the channels
+                        if self.debug:
+                            self.log_message(f"OCR condition failed: pixel at ({x}, {y}) " +
+                                           f"expected {expected_color}, got {pixel_color}, " +
+                                           f"diff={diff}, tolerance={tolerance*3}", logging.DEBUG)
+                        return False
+                except Exception as e:
+                    self.log_message(f"Error checking pixel color: {str(e)}", logging.ERROR)
+                    return False
+            elif not self.condition_checker._check_condition(condition, Image.fromarray(screenshot)):
+                if self.debug:
+                    self.log_message(f"OCR condition failed: {condition_type}", logging.DEBUG)
+                return False
+                
+        return True
+    
+    def get_ocr_text_for_element(self, menu_id, element_index):
+        """
+        Process all OCR regions for a UI element and return extracted text
+        
+        Args:
+            menu_id: Menu identifier
+            element_index: Index of element in the menu
+            
+        Returns:
+            dict: Dictionary of OCR region tags to extracted text
+        """
+        if not self.menu_stack:
+            return {}
+            
+        if menu_id not in self.menus:
+            return {}
+            
+        items = self.menus[menu_id].get("items", [])
+        if element_index >= len(items):
+            return {}
+            
+        element = items[element_index]
+        
+        # Get element name for better logging
+        element_name = element[1] if len(element) > 1 else "Unknown"
+        
+        # Log that we're starting OCR for this element
+        self.log_message(f"Starting OCR processing for element: {element_name}", logging.DEBUG)
+        
+        # Check if element has OCR regions
+        if len(element) <= 6 or not element[6]:
+            self.log_message(f"Element {element_name} has no OCR regions", logging.DEBUG)
+            return {}
+            
+        ocr_regions = element[6]
+        results = {}
+        
+        # Log OCR regions
+        self.log_message(f"Element {element_name} has {len(ocr_regions)} OCR regions", logging.DEBUG)
+        
+        # Take a screenshot for condition checking
+        screenshot = np.array(pyautogui.screenshot())
+        
+        # Process each OCR region
+        for region in ocr_regions:
+            tag = region.get("tag", "ocr1")
+            x1 = region.get("x1", 0)
+            y1 = region.get("y1", 0)
+            x2 = region.get("x2", 0)
+            y2 = region.get("y2", 0)
+            
+            # Log OCR region details
+            self.log_message(f"Processing OCR region '{tag}' at ({x1},{y1},{x2},{y2})", logging.DEBUG)
+            
+            # Check if region's conditions are met
+            if not self.is_ocr_region_active(region, screenshot):
+                # If conditions aren't met, add empty result
+                self.log_message(f"OCR region '{tag}' conditions not met, skipping OCR", logging.DEBUG)
+                results[tag] = ""
+                continue
+            
+            # All conditions met, perform OCR
+            text = self.extract_text_from_region(x1, y1, x2, y2)
+            results[tag] = text
+            
+            # Log result if in debug mode
+            if self.debug:
+                if text.strip():
+                    self.log_message(f"OCR region '{tag}' extracted text: '{text}'", logging.DEBUG)
+                else:
+                    self.log_message(f"OCR region '{tag}' extracted NO TEXT (empty result)", logging.DEBUG)
+        
+        return results
+    
+    def extract_text_from_region(self, x1, y1, x2, y2):
+        """
+        Perform OCR on a screen region to extract text
+        
+        Args:
+            x1, y1: Top-left coordinates
+            x2, y2: Bottom-right coordinates
+            
+        Returns:
+            str: Extracted text from the region (converted to lowercase)
+        """
+        try:
+            # Check cache first
+            cache_key = (x1, y1, x2, y2)
+            current_time = time.time()
+            
+            # If we have a valid cached result, use it
+            if cache_key in self.ocr_cache and current_time - self.ocr_cache[cache_key]['time'] < self.ocr_cache_ttl:
+                self.log_message(f"Using cached OCR result for region ({x1},{y1},{x2},{y2})", logging.DEBUG)
+                return self.ocr_cache[cache_key]['text']
+            
+            # Initialize reader if needed
+            if self.reader is None:
+                self.initialize_ocr_reader()
+                
+            # Take a screenshot
+            with mss.mss() as sct:
+                region = {"top": y1, "left": x1, "width": x2-x1, "height": y2-y1}
+                screenshot = sct.grab(region)
+                img = Image.frombytes("RGB", (screenshot.width, screenshot.height), screenshot.rgb)
+            
+            # Convert to numpy array for EasyOCR
+            img_np = np.array(img)
+            
+            # Perform OCR with EasyOCR
+            result = self.reader.readtext(img_np)
+            
+            # Extract all detected text and join
+            if result:
+                # EasyOCR returns a list of [bbox, text, confidence]
+                # Join all detected text pieces and convert to lowercase
+                ocr_text = ' '.join([entry[1].lower() for entry in result])
+            else:
+                ocr_text = ""
+            
+            # Cache the result
+            self.ocr_cache[cache_key] = {
+                'text': ocr_text,
+                'time': current_time
+            }
+            
+            self.log_message(f"OCR result for region ({x1},{y1},{x2},{y2}): '{ocr_text}'", logging.DEBUG)
+            return ocr_text
+            
+        except Exception as e:
+            self.log_message(f"OCR error: {e}", logging.ERROR)
+            return ""
 
+    def format_element_announcement(self, details, ocr_results={}):
+        """
+        Format announcement message for an element with enhanced OCR tag handling
+        
+        Args:
+            details: Element details dictionary
+            ocr_results: OCR text results for the element
+            
+        Returns:
+            str: Formatted announcement text
+        """
+        # Get element name for better debugging
+        element_name = details.get('name', 'Unknown')
+        
+        # Log start of template formatting
+        self.log_message(f"Formatting announcement for element: {element_name}", logging.DEBUG)
+        
+        # If no custom template, use default format
+        if not details.get('custom_announcement'):
+            # Default format: "{name}, {type}, {index}"
+            return f"{details['name']}, {details['type']}, {details['index_message']}"
+        
+        # Use custom template with replacements
+        template = details['custom_announcement']
+        self.log_message(f"Using custom template: {template}", logging.DEBUG)
+        
+        # Log available OCR results
+        for tag, text in ocr_results.items():
+            if text.strip():
+                self.log_message(f"OCR result '{tag}': '{text}'", logging.DEBUG)
+            else:
+                self.log_message(f"OCR result '{tag}': EMPTY", logging.DEBUG)
+        
+        # Prepare basic replacements
+        replacements = {
+            'name': details['name'],
+            'type': details['type'],
+            'index': details['index_message'],
+            'menu': self.menu_stack[-1].replace('-', ' ') if self.menu_stack else "no menu",
+            'submenu': "submenu" if details['has_submenu'] else "",
+            'group': details['group']
+        }
+        
+        # First check for OCR fallback chains like {ocr1,ocr2,ocr3}
+        # Find all tags with commas inside braces
+        fallback_pattern = r'{([^{}]+,[^{}]+)}'
+        fallback_matches = re.findall(fallback_pattern, template)
+        
+        # Log fallback patterns found
+        if fallback_matches:
+            for match in fallback_matches:
+                self.log_message(f"Found OCR fallback chain: {{{match}}}", logging.DEBUG)
+        else:
+            self.log_message(f"No OCR fallback chains found in template", logging.DEBUG)
+        
+        # Process each fallback chain
+        for match in fallback_matches:
+            # Get the full tag pattern (with braces)
+            full_tag = '{' + match + '}'
+            
+            # Split by comma to get individual tags
+            tags = [tag.strip() for tag in match.split(',')]
+            
+            # Log the tags in this chain
+            self.log_message(f"Processing fallback chain with tags: {tags}", logging.DEBUG)
+            
+            # Try each tag in the chain until we find one with non-empty text
+            replacement_text = ""
+            used_tag = None
+            
+            for tag in tags:
+                # Log the tag being checked
+                if tag in ocr_results:
+                    text = ocr_results[tag].strip()
+                    if text:
+                        replacement_text = text
+                        used_tag = tag
+                        self.log_message(f"Using OCR from '{tag}' in fallback chain: '{replacement_text}'", logging.DEBUG)
+                        break
+                    else:
+                        self.log_message(f"Tag '{tag}' has empty text, trying next in chain", logging.DEBUG)
+                else:
+                    self.log_message(f"Tag '{tag}' not found in OCR results", logging.DEBUG)
+            
+            # If none of the tags had content, use empty string
+            if not replacement_text:
+                self.log_message(f"No content found in OCR fallback chain {tags}", logging.DEBUG)
+            
+            # Replace the fallback pattern with the selected text
+            self.log_message(f"Replacing '{full_tag}' with '{replacement_text}'", logging.DEBUG)
+            template = template.replace(full_tag, replacement_text)
+        
+        # Now process remaining individual tags
+        for tag, text in ocr_results.items():
+            # Add individual tags to replacements (only handle those not already in fallback chains)
+            replacements[tag] = text.strip()
+        
+        # Perform all standard replacements
+        result = template
+        for key, value in replacements.items():
+            pattern = f"{{{key}}}"
+            if pattern in result:
+                self.log_message(f"Replacing '{pattern}' with '{value}'", logging.DEBUG)
+                result = result.replace(pattern, str(value))
+        
+        self.log_message(f"Final announcement: '{result}'", logging.DEBUG)
+        return result
     
     def find_valid_group(self, menu_id, preferred_group=None):
         """
@@ -890,108 +1221,6 @@ class AccessibleMenuNavigator:
             'position': position
         })
     
-    def extract_text_from_region(self, x1, y1, x2, y2):
-        """
-        Perform OCR on a screen region to extract text
-        
-        Args:
-            x1, y1: Top-left coordinates
-            x2, y2: Bottom-right coordinates
-            
-        Returns:
-            str: Extracted text from the region
-        """
-        try:
-            # Check cache first
-            cache_key = (x1, y1, x2, y2)
-            current_time = time.time()
-            
-            # If we have a valid cached result, use it
-            if cache_key in self.ocr_cache and current_time - self.ocr_cache[cache_key]['time'] < self.ocr_cache_ttl:
-                self.log_message(f"Using cached OCR result for region ({x1},{y1},{x2},{y2})", logging.DEBUG)
-                return self.ocr_cache[cache_key]['text']
-            
-            # Initialize reader if needed
-            if self.reader is None:
-                self.initialize_ocr_reader()
-                
-            # Take a screenshot
-            with mss.mss() as sct:
-                region = {"top": y1, "left": x1, "width": x2-x1, "height": y2-y1}
-                screenshot = sct.grab(region)
-                img = Image.frombytes("RGB", (screenshot.width, screenshot.height), screenshot.rgb)
-            
-            # Convert to numpy array for EasyOCR
-            img_np = np.array(img)
-            
-            # Perform OCR with EasyOCR
-            result = self.reader.readtext(img_np)
-            
-            # Extract all detected text and join
-            if result:
-                # EasyOCR returns a list of [bbox, text, confidence]
-                # Join all detected text pieces
-                ocr_text = ' '.join([entry[1] for entry in result])
-            else:
-                ocr_text = ""
-            
-            # Cache the result
-            self.ocr_cache[cache_key] = {
-                'text': ocr_text,
-                'time': current_time
-            }
-            
-            self.log_message(f"OCR result for region ({x1},{y1},{x2},{y2}): '{ocr_text}'", logging.DEBUG)
-            return ocr_text
-            
-        except Exception as e:
-            self.log_message(f"OCR error: {e}", logging.ERROR)
-            return ""
-    
-    def get_ocr_text_for_element(self, menu_id, element_index):
-        """
-        Process all OCR regions for a UI element and return extracted text
-        
-        Args:
-            menu_id: Menu identifier
-            element_index: Index of element in the menu
-            
-        Returns:
-            dict: Dictionary of OCR region tags to extracted text
-        """
-        if not self.menu_stack:
-            return {}
-            
-        if menu_id not in self.menus:
-            return {}
-            
-        items = self.menus[menu_id].get("items", [])
-        if element_index >= len(items):
-            return {}
-            
-        element = items[element_index]
-        
-        # Check if element has OCR regions
-        if len(element) <= 6 or not element[6]:
-            return {}
-            
-        ocr_regions = element[6]
-        results = {}
-        
-        # Process each OCR region
-        for region in ocr_regions:
-            tag = region.get("tag", "ocr1")
-            x1 = region.get("x1", 0)
-            y1 = region.get("y1", 0)
-            x2 = region.get("x2", 0)
-            y2 = region.get("y2", 0)
-            
-            # Perform OCR
-            text = self.extract_text_from_region(x1, y1, x2, y2)
-            results[tag] = text
-        
-        return results
-
     def is_element_active(self, element, screenshot=None):
         """
         Check if a UI element's conditions are met
@@ -1260,48 +1489,6 @@ class AccessibleMenuNavigator:
             'has_ocr': has_ocr,
             'custom_announcement': custom_announcement
         }
-
-    
-    def format_element_announcement(self, details, ocr_results={}):
-        """
-        Format announcement message for an element
-        
-        Args:
-            details: Element details dictionary
-            ocr_results: OCR text results for the element
-            
-        Returns:
-            str: Formatted announcement text
-        """
-        # If no custom template, use default format
-        if not details.get('custom_announcement'):
-            # Default format: "{name}, {type}, {index}"
-            return f"{details['name']}, {details['type']}, {details['index_message']}"
-        
-        # Use custom template with replacements
-        template = details['custom_announcement']
-        
-        # Prepare replacements
-        replacements = {
-            'name': details['name'],
-            'type': details['type'],
-            'index': details['index_message'],
-            'menu': self.menu_stack[-1].replace('-', ' ') if self.menu_stack else "no menu",
-            'submenu': "submenu" if details['has_submenu'] else "",
-            'group': details['group']
-        }
-        
-        # Add OCR results to replacements (convert to lowercase)
-        for tag, text in ocr_results.items():
-            replacements[tag] = text.lower()
-        
-        # Perform replacements
-        result = template
-        for key, value in replacements.items():
-            result = result.replace(f"{{{key}}}", str(value))
-        
-        return result
-
     
     def announce_element(self, details):
         """
@@ -1329,7 +1516,6 @@ class AccessibleMenuNavigator:
         # Format the announcement
         message = self.format_element_announcement(details, ocr_results)
         self.announce(message)
-
     
     def set_current_position(self, position, announce=True):
         """
@@ -1382,7 +1568,7 @@ class AccessibleMenuNavigator:
             if len(item) > 5 and item[5]:
                 groups.add(item[5])
             else:
-                groups.add("")  # Use empty string instead of "default"
+                groups.add("default")  # Use default instead of empty string for better UX
         
         # Sort groups for consistent navigation
         sorted_groups = sorted(list(groups))
@@ -1847,21 +2033,31 @@ class AccessibleMenuNavigator:
 
 
 def main():
-    """Main function with optimized startup"""
+    """Main function with optimized startup and debug mode"""
     parser = argparse.ArgumentParser(description="High-Performance Accessible Menu Navigation")
     parser.add_argument("profile", nargs="?", default="fortnite.json", help="Path to menu profile JSON file")
-    parser.add_argument("-v", "--verbose", action="store_true", help="Enable verbose logging")
+    parser.add_argument("-d", "--debug", action="store_true", help="Enable debug mode (logs to file)")
     parser.add_argument("--languages", type=str, default="en", help="OCR languages, comma-separated (e.g., 'en,fr,es')")
     args = parser.parse_args()
     
     # Parse OCR languages
     ocr_languages = [lang.strip() for lang in args.languages.split(',')]
     
+    # Set up file-based logging if debug mode is enabled
+    if args.debug:
+        log_file = "ma_debug.log"
+        file_handler = logging.FileHandler(log_file, mode='w')
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        logger.addHandler(file_handler)
+        logger.setLevel(logging.DEBUG)
+        print(f"Debug logging enabled. Log file: {log_file}")
+    
     # Create the navigator
     navigator = AccessibleMenuNavigator()
     
-    # Set verbose mode based on command line flag (default is False)
-    navigator.set_verbose(args.verbose)
+    # Set debug mode based on command line flag
+    navigator.set_debug(args.debug)
     
     try:
         # Start the navigator with the specified profile and languages
