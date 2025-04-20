@@ -1,5 +1,5 @@
 """
-MenuAccess main script with improved OCR condition handling and debug mode
+MenuAccess main script
 """
 
 import ctypes
