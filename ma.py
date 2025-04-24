@@ -32,6 +32,113 @@ logger = logging.getLogger("AccessibleMenuNav")
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
 
+# Try to import dxcam-cpp if available
+try:
+    import dxcam
+    DXCAM_AVAILABLE = True
+    logger.info("dxcam-cpp is available and will be used for screen capture")
+except ImportError:
+    DXCAM_AVAILABLE = False
+    logger.info("dxcam-cpp not available, falling back to MSS for screen capture")
+
+
+class ScreenCapture:
+    """Screen capture class that uses dxcam-cpp if available, or MSS as fallback"""
+    
+    def __init__(self):
+        """Initialize the appropriate screen capture mechanism"""
+        self.capture_method = "dxcam" if DXCAM_AVAILABLE else "mss"
+        self.dxcam_instance = None
+        
+        # Thread-local storage for MSS instances
+        self.thread_locals = threading.local()
+        
+        logger.info(f"Using {self.capture_method} for screen capture")
+    
+    def capture(self, region=None):
+        """
+        Capture a screenshot
+        
+        Args:
+            region: Optional region to capture (x, y, width, height) or None for full screen
+            
+        Returns:
+            PIL.Image: Screenshot as PIL Image
+        """
+        if self.capture_method == "dxcam":
+            return self._capture_dxcam(region)
+        else:
+            return self._capture_mss(region)
+    
+    def _capture_dxcam(self, region=None):
+        """Capture using dxcam-cpp"""
+        try:
+            # Initialize dxcam instance if not already done
+            if self.dxcam_instance is None:
+                self.dxcam_instance = dxcam.create()
+            
+            # Capture frame
+            if region:
+                # dxcam region format is (left, top, right, bottom)
+                dxcam_region = (region[0], region[1], region[0] + region[2], region[1] + region[3])
+                frame = self.dxcam_instance.grab(region=dxcam_region)
+            else:
+                frame = self.dxcam_instance.grab()
+            
+            if frame is None:
+                # Fallback to MSS in case of failure
+                logger.warning("dxcam capture failed, falling back to MSS")
+                return self._capture_mss(region)
+            
+            # Convert to PIL Image
+            img = Image.fromarray(frame)
+            return img
+            
+        except Exception as e:
+            logger.error(f"dxcam error: {e}, falling back to MSS")
+            return self._capture_mss(region)
+    
+    def _capture_mss(self, region=None):
+        """Capture using MSS with thread-safe instance management"""
+        try:
+            # Each thread gets its own MSS instance
+            if not hasattr(self.thread_locals, 'mss_instance'):
+                # Create a new MSS instance for this thread
+                self.thread_locals.mss_instance = mss.mss()
+                thread_id = threading.get_ident()
+                logger.debug(f"Created new MSS instance for thread {thread_id}")
+            
+            # Use the thread-local MSS instance
+            sct = self.thread_locals.mss_instance
+            
+            if region:
+                mss_region = {"left": region[0], "top": region[1], 
+                            "width": region[2], "height": region[3]}
+                screenshot = sct.grab(mss_region)
+            else:
+                screenshot = sct.grab(sct.monitors[0])
+            
+            # Convert to PIL Image
+            img = Image.frombytes("RGB", (screenshot.width, screenshot.height), screenshot.rgb)
+            return img
+            
+        except Exception as e:
+            logger.error(f"MSS error: {e}")
+            # Last resort fallback to pyautogui
+            return pyautogui.screenshot()
+    
+    def close(self):
+        """Clean up resources"""
+        if self.dxcam_instance:
+            self.dxcam_instance.stop()
+        
+        # Close any MSS instances we've created
+        if hasattr(self.thread_locals, 'mss_instance'):
+            try:
+                self.thread_locals.mss_instance.close()
+            except:
+                pass
+
 
 class MenuConditionChecker:
     """Highly optimized class for checking menu conditions with performance enhancements"""
@@ -49,6 +156,9 @@ class MenuConditionChecker:
         # Initialize ORB feature detector for image matching
         self.orb = cv2.ORB_create(nfeatures=1000)
         self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        
+        # Create screen capture instance
+        self.screen_capture = ScreenCapture()
     
     def set_verbose(self, verbose):
         """Enable or disable verbose logging mode"""
@@ -344,25 +454,17 @@ class MenuConditionChecker:
             current_time - self._last_screenshot_time < self._cache_ttl):
             screenshot_pil = self._screenshot_cache
         else:
-            # Take a new screenshot with MSS (fastest method)
-            # Create a new MSS instance each time for thread safety
+            # Take a new screenshot using our screen capture class
             try:
-                with mss.mss() as sct:
-                    monitor = sct.monitors[0]  # Primary monitor
-                    screenshot = sct.grab(monitor)
-                    
-                    # Convert to PIL only once - big performance gain
-                    screenshot_pil = Image.frombytes("RGB", 
-                                                  (screenshot.width, screenshot.height), 
-                                                  screenshot.rgb)
-                    
-                    # Update cache
-                    self._screenshot_cache = screenshot_pil
-                    self._last_screenshot_time = current_time
-                    
-                    # Clear outdated cache entries
-                    self._cache = {k: v for k, v in self._cache.items() 
-                                 if k[1] >= current_time - self._cache_ttl}
+                screenshot_pil = self.screen_capture.capture()
+                
+                # Update cache
+                self._screenshot_cache = screenshot_pil
+                self._last_screenshot_time = current_time
+                
+                # Clear outdated cache entries
+                self._cache = {k: v for k, v in self._cache.items() 
+                               if k[1] >= current_time - self._cache_ttl}
                     
             except Exception as e:
                 if self.verbose:
@@ -437,6 +539,9 @@ class AccessibleMenuNavigator:
         self.last_menu_check = 0
         self.menu_check_ongoing = False
         self.last_detected_menu = None
+        
+        # Thread-local storage for screen capture instances
+        self.thread_locals = threading.local()
         
         # Thread management
         self.mouse_queue = queue.Queue()
@@ -621,9 +726,25 @@ class AccessibleMenuNavigator:
             speech_thread.join(timeout=1.0)
             detection_thread.join(timeout=1.0)
             
-            # No need for explicit MSS cleanup - instances are managed per thread
-                
+            # Clean up screen capture resources
+            self.condition_checker.screen_capture.close()
+            
             self.log_message("Exiting")
+    
+    def get_thread_screen_capture(self):
+        """
+        Get a thread-specific screen capture instance using thread-local storage
+        
+        Returns:
+            ScreenCapture: A screen capture instance for the current thread
+        """
+        # Use thread-local storage to ensure each thread has its own capture instance
+        if not hasattr(self.thread_locals, 'screen_capture'):
+            self.thread_locals.screen_capture = ScreenCapture()
+            thread_id = threading.get_ident()
+            logger.debug(f"Created new ScreenCapture for thread {thread_id}")
+        
+        return self.thread_locals.screen_capture
     
     def load_menu_profile(self, filepath):
         """
@@ -848,12 +969,13 @@ class AccessibleMenuNavigator:
         if "conditions" not in ocr_region or not ocr_region["conditions"]:
             return True
             
-        # Take a screenshot if not provided
+        # Get screenshot if not provided (using thread-specific instance)
         if screenshot is None:
-            screenshot = np.array(pyautogui.screenshot())
-        
+            screen_capture = self.get_thread_screen_capture()
+            screenshot_pil = screen_capture.capture()
+            screenshot = np.array(screenshot_pil)
         # Convert PIL screenshot to numpy array if needed
-        if isinstance(screenshot, Image.Image):
+        elif isinstance(screenshot, Image.Image):
             screenshot = np.array(screenshot)
             
         # Check each condition - all must be met for the region to be active
@@ -924,6 +1046,14 @@ class AccessibleMenuNavigator:
         # Get element name for better logging
         element_name = element[1] if len(element) > 1 else "Unknown"
         
+        # Check for OCR delay setting (element[10])
+        ocr_delay_ms = 0
+        if len(element) > 10:
+            ocr_delay_ms = element[10]
+            if ocr_delay_ms > 0:
+                self.log_message(f"Element {element_name} has OCR delay of {ocr_delay_ms}ms, waiting...", logging.DEBUG)
+                time.sleep(ocr_delay_ms / 1000.0)  # Convert ms to seconds
+        
         # Log that we're starting OCR for this element
         self.log_message(f"Starting OCR processing for element: {element_name}", logging.DEBUG)
         
@@ -938,8 +1068,10 @@ class AccessibleMenuNavigator:
         # Log OCR regions
         self.log_message(f"Element {element_name} has {len(ocr_regions)} OCR regions", logging.DEBUG)
         
-        # Take a screenshot for condition checking
-        screenshot = np.array(pyautogui.screenshot())
+        # Take a screenshot for condition checking (using thread-specific screen capture)
+        screen_capture = self.get_thread_screen_capture()
+        screenshot_pil = screen_capture.capture()
+        screenshot = np.array(screenshot_pil)
         
         # Process each OCR region
         for region in ocr_regions:
@@ -997,14 +1129,12 @@ class AccessibleMenuNavigator:
             if self.reader is None:
                 self.initialize_ocr_reader()
                 
-            # Take a screenshot
-            with mss.mss() as sct:
-                region = {"top": y1, "left": x1, "width": x2-x1, "height": y2-y1}
-                screenshot = sct.grab(region)
-                img = Image.frombytes("RGB", (screenshot.width, screenshot.height), screenshot.rgb)
+            # Take a screenshot using thread-specific screen capture
+            screen_capture = self.get_thread_screen_capture()
+            screenshot_pil = screen_capture.capture(region=(x1, y1, x2-x1, y2-y1))
             
             # Convert to numpy array for EasyOCR
-            img_np = np.array(img)
+            img_np = np.array(screenshot_pil)
             
             # Perform OCR with EasyOCR
             result = self.reader.readtext(img_np)
@@ -1236,9 +1366,11 @@ class AccessibleMenuNavigator:
         if len(element) <= 9 or not element[9]:
             return True
             
-        # Take a screenshot if not provided
+        # Take a screenshot if not provided (using thread-specific screen capture)
         if screenshot is None:
-            screenshot = np.array(pyautogui.screenshot())
+            screen_capture = self.get_thread_screen_capture()
+            screenshot_pil = screen_capture.capture()
+            screenshot = screenshot_pil
             
         # Check each condition - all must be met for the element to be active
         for condition in element[9]:
@@ -1418,13 +1550,14 @@ class AccessibleMenuNavigator:
         if not has_conditional_items:
             return all_items  # No filtering needed
             
-        # Take a screenshot for condition checking
-        screenshot = np.array(pyautogui.screenshot())
+        # Take a screenshot for condition checking (using thread-specific screen capture)
+        screen_capture = self.get_thread_screen_capture()
+        screenshot_pil = screen_capture.capture()
         
         # Filter items based on their conditions
         active_items = []
         for item in all_items:
-            if self.is_element_active(item, screenshot):
+            if self.is_element_active(item, screenshot_pil):
                 active_items.append(item)
                 
         return active_items
@@ -1475,6 +1608,9 @@ class AccessibleMenuNavigator:
         # Check for custom announcement format
         custom_announcement = item[7] if len(item) > 7 else None
         
+        # Check for OCR delay
+        ocr_delay_ms = item[10] if len(item) > 10 else 0
+        
         return {
             'coordinates': item[0],
             'name': item[1],
@@ -1487,7 +1623,8 @@ class AccessibleMenuNavigator:
             'submenu_indicator': submenu_indicator,
             'group': item_group,
             'has_ocr': has_ocr,
-            'custom_announcement': custom_announcement
+            'custom_announcement': custom_announcement,
+            'ocr_delay_ms': ocr_delay_ms  # Include OCR delay for reference
         }
     
     def announce_element(self, details):
@@ -1560,7 +1697,7 @@ class AccessibleMenuNavigator:
             return self.menu_groups[menu_id]
         
         # Find all unique groups in the menu
-        groups = set()
+        groups = set(["default"])
         items = self.menus[menu_id].get("items", [])
         
         for item in items:
@@ -1748,8 +1885,9 @@ class AccessibleMenuNavigator:
                     
             return sorted(group_indices, key=lambda idx: items[idx][8] if len(items[idx]) > 8 else 0)
         
-        # Take a screenshot for condition checking
-        screenshot = np.array(pyautogui.screenshot())
+        # Take a screenshot for condition checking (using thread-specific screen capture)
+        screen_capture = self.get_thread_screen_capture()
+        screenshot_pil = screen_capture.capture()
         
         # Filter items based on their conditions and group
         group_indices = []
@@ -1758,7 +1896,7 @@ class AccessibleMenuNavigator:
             if len(item) > 5 and item[5]:
                 item_group = item[5]
                 
-            if item_group == group and self.is_element_active(item, screenshot):
+            if item_group == group and self.is_element_active(item, screenshot_pil):
                 group_indices.append(i)
                 
         # Sort by index field if available
@@ -2066,8 +2204,6 @@ def main():
         # Handle Ctrl+C gracefully
         print("\nKeyboard interrupt received. Exiting...")
         
-        # No need to clean up MSS instances - they're created per-thread
-            
         # Set stop flag for any running threads
         if hasattr(navigator, 'stop_requested'):
             navigator.stop_requested.set()

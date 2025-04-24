@@ -757,7 +757,10 @@ class RegionImageConditionDialog(wx.Dialog):
         self.Center()
         
     def init_ui(self):
-        panel = wx.Panel(self)
+        # Create a scrolled panel instead of regular panel
+        panel = wx.lib.scrolledpanel.ScrolledPanel(self)
+        panel.SetupScrolling(scroll_x=False, scroll_y=True)
+        
         vbox = wx.BoxSizer(wx.VERTICAL)
         
         # Region coordinates group
@@ -857,60 +860,17 @@ class RegionImageConditionDialog(wx.Dialog):
         
         panel.SetSizer(vbox)
         
+        # Ensure proper layout and scrolling
+        panel.Layout()
+        panel.SetupScrolling()
+        
         # Bind close event
         self.Bind(wx.EVT_CLOSE, self.on_close)
         
         # Load existing image if present
         if self.condition.get("image_data"):
             self.load_preview_from_base64()
-    
-    def on_confidence_changed(self, event):
-        """Update the confidence label when slider is moved"""
-        confidence = self.confidence_slider.GetValue() / 100.0
-        for child in self.GetChildren():
-            if isinstance(child, wx.Panel):
-                for grandchild in child.GetChildren():
-                    if isinstance(grandchild, wx.StaticBox):
-                        for greatgrandchild in grandchild.GetChildren():
-                            if isinstance(greatgrandchild, wx.StaticText) and "Confidence Threshold:" in greatgrandchild.GetLabel():
-                                greatgrandchild.SetLabel(f"Confidence Threshold: {confidence:.2f}")
-                                break
-    
-    def load_preview_from_base64(self):
-        """Load the image preview from base64-encoded data"""
-        import base64
-        import io
-        from PIL import Image
-        
-        try:
-            # Decode the base64 image data
-            image_data = base64.b64decode(self.condition["image_data"])
             
-            # Create a PIL Image from the decoded data
-            image = Image.open(io.BytesIO(image_data))
-            
-            # Convert PIL Image to wx.Bitmap
-            width, height = image.size
-            wximage = wx.Image(width, height)
-            wximage.SetData(image.convert("RGB").tobytes())
-            bitmap = wx.Bitmap(wximage)
-            
-            # Update the preview bitmap and text
-            self.preview_bitmap.SetBitmap(bitmap)
-            self.preview_text.SetLabel(f"Image: {width}x{height} pixels")
-            self.captured_region = image
-            
-            # Update layout
-            self.Layout()
-        except Exception as e:
-            self.preview_text.SetLabel(f"Error loading image: {str(e)}")
-    
-    def on_close(self, event):
-        """Ensure tracker is stopped when dialog closes"""
-        if self.cursor_tracker.is_active:
-            self.cursor_tracker.stop_tracking()
-        event.Skip()
-    
     def on_select_region(self, event):
         """Start the interactive region selection process"""
         self.Iconize(True)
@@ -925,10 +885,9 @@ class RegionImageConditionDialog(wx.Dialog):
         except:
             pass
         
-        # IMPORTANT: Call region selection directly instead of in a thread
-        # Use wx.CallAfter to ensure we're still in the main thread
+        # Use wx.CallAfter to ensure we're in the main thread
         wx.CallAfter(self._do_select_region)
-    
+        
     def _do_select_region(self):
         """Perform the interactive region selection"""
         # Create a selection overlay dialog
@@ -1050,7 +1009,7 @@ class RegionImageConditionDialog(wx.Dialog):
         
         # Show the overlay (this blocks until the overlay is closed)
         overlay.ShowModal()
-    
+        
     def on_selection_canceled(self):
         """Handle cancellation of region selection"""
         # Stop the cursor tracker
@@ -1109,7 +1068,54 @@ class RegionImageConditionDialog(wx.Dialog):
             parent_frame.SetStatusText("")
         except:
             pass
+            
+    def on_confidence_changed(self, event):
+        """Update the confidence label when slider is moved"""
+        confidence = self.confidence_slider.GetValue() / 100.0
+        for child in self.GetChildren():
+            if isinstance(child, wx.Panel):
+                for grandchild in child.GetChildren():
+                    if isinstance(grandchild, wx.StaticBox):
+                        for greatgrandchild in grandchild.GetChildren():
+                            if isinstance(greatgrandchild, wx.StaticText) and "Confidence Threshold:" in greatgrandchild.GetLabel():
+                                greatgrandchild.SetLabel(f"Confidence Threshold: {confidence:.2f}")
+                                break
     
+    def load_preview_from_base64(self):
+        """Load the image preview from base64-encoded data"""
+        import base64
+        import io
+        from PIL import Image
+        
+        try:
+            # Decode the base64 image data
+            image_data = base64.b64decode(self.condition["image_data"])
+            
+            # Create a PIL Image from the decoded data
+            image = Image.open(io.BytesIO(image_data))
+            
+            # Convert PIL Image to wx.Bitmap
+            width, height = image.size
+            wximage = wx.Image(width, height)
+            wximage.SetData(image.convert("RGB").tobytes())
+            bitmap = wx.Bitmap(wximage)
+            
+            # Update the preview bitmap and text
+            self.preview_bitmap.SetBitmap(bitmap)
+            self.preview_text.SetLabel(f"Image: {width}x{height} pixels")
+            self.captured_region = image
+            
+            # Update layout
+            self.Layout()
+        except Exception as e:
+            self.preview_text.SetLabel(f"Error loading image: {str(e)}")
+    
+    def on_close(self, event):
+        """Ensure tracker is stopped when dialog closes"""
+        if self.cursor_tracker.is_active:
+            self.cursor_tracker.stop_tracking()
+        event.Skip()
+        
     def get_condition(self):
         """Get the condition data from the dialog"""
         import base64
@@ -1571,7 +1577,7 @@ class UIElementDialog(wx.Dialog):
     
     def __init__(self, parent, title="Add UI Element", element=None):
         # Increased height to ensure all sections are visible
-        super().__init__(parent, title=title, size=(550, 850))  # Increased height for conditions
+        super().__init__(parent, title=title, size=(650, 850))
         
         # Default values if no element is provided
         self.element = element or [
@@ -1750,6 +1756,24 @@ class UIElementDialog(wx.Dialog):
         ocr_sizer.Add(ocr_btn_sizer, flag=wx.EXPAND | wx.ALL, border=5)
         
         vbox.Add(ocr_sizer, flag=wx.EXPAND | wx.ALL, border=10)
+        
+        # OCR Delay section
+        ocr_delay_box = wx.BoxSizer(wx.HORIZONTAL)
+        ocr_delay_label = wx.StaticText(panel, label="OCR Delay (ms):")
+        
+        # Default to 0 or existing value if present (for element[10])
+        ocr_delay_value = 0
+        if len(self.element) > 10:
+            ocr_delay_value = self.element[10]
+        
+        self.ocr_delay_ctrl = wx.SpinCtrl(panel, min=0, max=5000, value=str(ocr_delay_value))
+        ocr_delay_help = wx.StaticText(panel, label="(Delay before OCR after selection)")
+        
+        ocr_delay_box.Add(ocr_delay_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=8)
+        ocr_delay_box.Add(self.ocr_delay_ctrl, proportion=1, flag=wx.RIGHT, border=8)
+        ocr_delay_box.Add(ocr_delay_help, flag=wx.ALIGN_CENTER_VERTICAL)
+        
+        vbox.Add(ocr_delay_box, flag=wx.EXPAND | wx.ALL, border=10)
 
         # Element Index
         index_box = wx.BoxSizer(wx.HORIZONTAL)
@@ -2089,6 +2113,9 @@ class UIElementDialog(wx.Dialog):
         if self.has_conditions_cb.GetValue() and len(self.element) > 9:
             conditions = self.element[9]
             
+        # Get OCR delay
+        ocr_delay = self.ocr_delay_ctrl.GetValue()
+        
         return [
             (self.x_ctrl.GetValue(), self.y_ctrl.GetValue()),
             self.name_ctrl.GetValue(),
@@ -2099,7 +2126,8 @@ class UIElementDialog(wx.Dialog):
             ocr_regions,
             announcement,
             index,
-            conditions
+            conditions,
+            ocr_delay  # Add OCR delay as element[10]
         ]
 
     def on_has_conditions_toggled(self, event):
