@@ -28,7 +28,7 @@ class OCRHandler:
         
         # OCR cache to avoid repeated recognition of the same region
         self.ocr_cache = {}
-        self.ocr_cache_ttl = 5.0  # OCR cache valid for 5 seconds
+        self.ocr_cache_ttl = 0.05  # OCR cache valid for 0.05 seconds
     
     def initialize_reader(self):
         """
