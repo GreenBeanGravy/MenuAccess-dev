@@ -31,6 +31,12 @@ class ProfileEditorFrame(wx.Frame):
             'elements': []     # Now a list for multiple items
         }
         
+        # Create the profiles directory if it doesn't exist
+        # Get the directory where the script is located
+        script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.profiles_dir = os.path.join(script_dir, 'profiles')
+        os.makedirs(self.profiles_dir, exist_ok=True)
+        
         self.init_ui()
         
         # Create a global keyboard shortcut table
@@ -46,6 +52,21 @@ class ProfileEditorFrame(wx.Frame):
         
         # Initialize with default main_menu
         self.add_menu("main_menu")
+        
+        # Load config and check for last profile
+        config = self.load_config()
+        last_profile = config.get('last_profile')
+        
+        if last_profile and os.path.exists(last_profile):
+            # Ask if the user wants to open the last profile
+            message = f"Do you want to open your last profile?\n\n{os.path.basename(last_profile)}"
+            dlg = wx.MessageDialog(self, message, "Open Last Profile", wx.YES_NO | wx.ICON_QUESTION)
+            result = dlg.ShowModal()
+            dlg.Destroy()
+            
+            if result == wx.ID_YES:
+                # Load the last profile
+                self.load_profile(last_profile)
         
     def init_ui(self):
         panel = wx.Panel(self)
@@ -130,6 +151,85 @@ class ProfileEditorFrame(wx.Frame):
         
         # Bind close event
         self.Bind(wx.EVT_CLOSE, self.on_close)
+    
+    def is_profile_empty(self):
+        """Check if the current profile is essentially empty"""
+        # An empty profile has no menus or just a default main_menu with no items/conditions
+        if not self.profile_data:
+            return True
+        
+        if len(self.profile_data) == 1 and 'main_menu' in self.profile_data:
+            main_menu = self.profile_data['main_menu']
+            # Check if the main menu has any meaningful content
+            if not main_menu.get('items') and not main_menu.get('conditions'):
+                return True
+        
+        return False
+    
+    def save_config(self):
+        """Save configuration including last opened profile"""
+        # Get the directory where the script is located
+        script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        config_dir = os.path.join(script_dir, 'pflib')
+        os.makedirs(config_dir, exist_ok=True)
+        
+        config_path = os.path.join(config_dir, 'config.json')
+        config = {
+            'last_profile': self.current_file
+        }
+        
+        try:
+            with open(config_path, 'w') as file:
+                json.dump(config, file)
+        except Exception as e:
+            print(f"Failed to save config: {e}")
+    
+    def load_config(self):
+        """Load configuration including last opened profile"""
+        # Get the directory where the script is located
+        script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        config_dir = os.path.join(script_dir, 'pflib')
+        config_path = os.path.join(config_dir, 'config.json')
+        config = {
+            'last_profile': None
+        }
+        
+        try:
+            if os.path.exists(config_path):
+                with open(config_path, 'r') as file:
+                    config.update(json.load(file))
+        except Exception as e:
+            print(f"Failed to load config: {e}")
+        
+        return config
+    
+    def load_profile(self, path):
+        """Load a profile from the given path"""
+        try:
+            with open(path, 'r') as file:
+                self.profile_data = json.load(file)
+            
+            self.current_file = path
+            self.is_changed = False
+            
+            # Clear notebook
+            while self.notebook.GetPageCount() > 0:
+                self.notebook.DeletePage(0)
+            
+            # Add pages for each menu
+            for menu_id, menu_data in self.profile_data.items():
+                menu_panel = MenuPanel(self.notebook, menu_id, menu_data, self)
+                self.notebook.AddPage(menu_panel, menu_id)
+            
+            # Update UI
+            self.SetTitle(f"{APP_TITLE} v{APP_VERSION} - {os.path.basename(path)}")
+            self.statusbar.SetStatusText(f"Loaded: {path}")
+            
+            # Save the config with the new last profile
+            self.save_config()
+            
+        except Exception as e:
+            wx.MessageBox(f"Error loading profile: {str(e)}", "Error", wx.ICON_ERROR)
     
     def on_copy_menu_menu_item(self, event):
         """Handle copy menu menu item"""
@@ -370,7 +470,7 @@ class ProfileEditorFrame(wx.Frame):
     
     def on_new(self, event):
         """Create a new profile"""
-        if self.is_changed:
+        if self.is_changed and not self.is_profile_empty():
             if wx.MessageBox("Current profile has unsaved changes. Continue?", 
                            "Please confirm", wx.ICON_QUESTION | wx.YES_NO) != wx.YES:
                 return
@@ -392,12 +492,13 @@ class ProfileEditorFrame(wx.Frame):
     
     def on_open(self, event):
         """Open an existing profile"""
-        if self.is_changed:
+        if self.is_changed and not self.is_profile_empty():
             if wx.MessageBox("Current profile has unsaved changes. Continue?", 
                            "Please confirm", wx.ICON_QUESTION | wx.YES_NO) != wx.YES:
                 return
         
-        with wx.FileDialog(self, "Open Profile", wildcard="JSON files (*.json)|*.json",
+        with wx.FileDialog(self, "Open Profile", defaultDir=self.profiles_dir,
+                         wildcard="JSON files (*.json)|*.json",
                          style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as fileDialog:
             
             if fileDialog.ShowModal() == wx.ID_CANCEL:
@@ -405,29 +506,7 @@ class ProfileEditorFrame(wx.Frame):
             
             # Get the path
             path = fileDialog.GetPath()
-            
-            try:
-                with open(path, 'r') as file:
-                    self.profile_data = json.load(file)
-                
-                self.current_file = path
-                self.is_changed = False
-                
-                # Clear notebook
-                while self.notebook.GetPageCount() > 0:
-                    self.notebook.DeletePage(0)
-                
-                # Add pages for each menu
-                for menu_id, menu_data in self.profile_data.items():
-                    menu_panel = MenuPanel(self.notebook, menu_id, menu_data, self)
-                    self.notebook.AddPage(menu_panel, menu_id)
-                
-                # Update UI
-                self.SetTitle(f"{APP_TITLE} v{APP_VERSION} - {os.path.basename(path)}")
-                self.statusbar.SetStatusText(f"Loaded: {path}")
-                
-            except Exception as e:
-                wx.MessageBox(f"Error loading profile: {str(e)}", "Error", wx.ICON_ERROR)
+            self.load_profile(path)
     
     def on_save(self, event):
         """Save the current profile"""
@@ -452,12 +531,16 @@ class ProfileEditorFrame(wx.Frame):
             self.SetTitle(f"{APP_TITLE} v{APP_VERSION} - {os.path.basename(self.current_file)}")
             self.statusbar.SetStatusText(f"Saved: {self.current_file}")
             
+            # Save the config with the new last profile
+            self.save_config()
+            
         except Exception as e:
             wx.MessageBox(f"Error saving profile: {str(e)}", "Error", wx.ICON_ERROR)
     
     def on_save_as(self, event):
         """Save the current profile with a new name"""
-        with wx.FileDialog(self, "Save Profile", wildcard="JSON files (*.json)|*.json",
+        with wx.FileDialog(self, "Save Profile", defaultDir=self.profiles_dir,
+                         wildcard="JSON files (*.json)|*.json",
                          style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as fileDialog:
             
             if fileDialog.ShowModal() == wx.ID_CANCEL:
@@ -480,6 +563,9 @@ class ProfileEditorFrame(wx.Frame):
                 # Update UI
                 self.SetTitle(f"{APP_TITLE} v{APP_VERSION} - {os.path.basename(path)}")
                 self.statusbar.SetStatusText(f"Saved: {path}")
+                
+                # Save the config with the new last profile
+                self.save_config()
                 
             except Exception as e:
                 wx.MessageBox(f"Error saving profile: {str(e)}", "Error", wx.ICON_ERROR)
@@ -704,14 +790,14 @@ class ProfileEditorFrame(wx.Frame):
         info = wx.adv.AboutDialogInfo()
         info.SetName(APP_TITLE)
         info.SetVersion(APP_VERSION)
-        info.SetDescription("A tool for creating UI navigation profiles with screen detection conditions")
+        info.SetDescription("The profile editor for MenuAccess")
         info.SetCopyright("(C) 2025")
         
         try:
             wx.adv.AboutBox(info)
         except:
             # Fallback if wx.adv is not available
-            wx.MessageBox(f"{APP_TITLE} v{APP_VERSION}\nA tool for creating UI navigation profiles", "About", wx.OK | wx.ICON_INFORMATION)
+            wx.MessageBox(f"{APP_TITLE} v{APP_VERSION}\nThe profile editor for MenuAccess", "About", wx.OK | wx.ICON_INFORMATION)
     
     def on_exit(self, event):
         """Exit the application"""
@@ -719,7 +805,7 @@ class ProfileEditorFrame(wx.Frame):
     
     def on_close(self, event):
         """Handle window close event"""
-        if self.is_changed:
+        if self.is_changed and not self.is_profile_empty():
             dlg = wx.MessageDialog(self, 
                                   "Save changes before closing?",
                                   "Please confirm",
@@ -735,4 +821,4 @@ class ProfileEditorFrame(wx.Frame):
             else:  # wx.ID_CANCEL
                 event.Veto()  # Stop the close
         else:
-            event.Skip()  # No changes, continue with close
+            event.Skip()  # No changes or empty profile, continue with close

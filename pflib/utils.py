@@ -5,7 +5,7 @@ Utilities for the Profile Creator application
 import wx
 
 # Constants for application
-APP_TITLE = "UI Profile Creator"
+APP_TITLE = "MenuAccess Profile Editor"
 APP_VERSION = "1"
 
 # Global cursor tracker instance
