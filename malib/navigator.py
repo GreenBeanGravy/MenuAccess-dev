@@ -69,6 +69,9 @@ class AccessibleMenuNavigator:
         
         # OCR handler
         self.ocr_handler = None
+        
+        # Last speech time for rate limiting
+        self.last_speech_time = time.time()
     
     def set_verbose(self, verbose):
         """
@@ -106,34 +109,108 @@ class AccessibleMenuNavigator:
         # Filter verbose messages
         if message.startswith("Menu detection") and not self.verbose:
             return
+        
+        # Sanitize message to avoid potential screen reader issues
+        # Some screen readers may have issues with certain characters
+        # or extremely long messages
+        safe_message = self._sanitize_speech_text(message)
             
         # Add to speech queue instead of blocking
-        self.speech_queue.put(message)
+        try:
+            self.speech_queue.put(safe_message, block=False)
+        except queue.Full:
+            # If queue is full, drop the message
+            logger.warning("Speech queue full, dropping message")
+
+    def _sanitize_speech_text(self, text):
+        """
+        Sanitize text for screen reader to avoid issues
+        
+        Args:
+            text: Raw text string
+            
+        Returns:
+            str: Sanitized text
+        """
+        if not text:
+            return ""
+        
+        # Truncate extremely long messages
+        max_length = 200
+        if len(text) > max_length:
+            text = text[:max_length] + "..."
+        
+        # Replace potentially problematic characters
+        text = text.replace("\t", " ")
+        text = text.replace("\r", " ")
+        text = text.replace("\n", " ")
+        
+        # Collapse multiple spaces
+        while "  " in text:
+            text = text.replace("  ", " ")
+        
+        return text
     
     def _speech_thread_worker(self):
         """Background thread that processes speech queue to avoid blocking UI navigation"""
+        last_reinit_time = 0
+        reinit_cooldown = 10  # Seconds between reinitializations
+        
         while not self.stop_requested.is_set():
             try:
                 # Get message with timeout to allow checking stop_requested
                 message = self.speech_queue.get(timeout=0.1)
                 
+                # Skip empty messages
+                if not message or not message.strip():
+                    self.speech_queue.task_done()
+                    continue
+                
+                # Initialize speaker if not already done
+                if self.speaker is None:
+                    try:
+                        import accessible_output2.outputs.auto as ao
+                        self.speaker = ao.Auto()
+                        logger.info("Speech engine initialized")
+                    except Exception as init_error:
+                        logger.error(f"Failed to initialize speech engine: {init_error}")
+                        # Create a dummy speaker that logs instead
+                        class DummySpeaker:
+                            def speak(self, message):
+                                logger.info(f"SPEECH: {message}")
+                        self.speaker = DummySpeaker()
+                
                 try:
+                    # Limit rate of announcements
+                    current_time = time.time()
+                    if hasattr(self, 'last_speech_time') and current_time - self.last_speech_time < 0.1:
+                        time.sleep(0.1)  # Ensure some delay between announcements
+                    
+                    # Speak the message
                     self.speaker.speak(message)
+                    self.last_speech_time = time.time()
                 except Exception as speech_error:
                     # Log the error but continue operation
                     logger.error(f"Speech error: {speech_error}")
                     
-                    # Try to reinitialize the speech engine
-                    try:
-                        import accessible_output2.outputs.auto as ao
-                        self.speaker = ao.Auto()
-                        logger.info("Reinitialized speech engine")
-                    except:
-                        logger.error("Failed to reinitialize speech engine")
-                
+                    # Try to reinitialize the speech engine after cooldown
+                    current_time = time.time()
+                    if current_time - last_reinit_time > reinit_cooldown:
+                        try:
+                            import accessible_output2.outputs.auto as ao
+                            self.speaker = ao.Auto()
+                            logger.info("Reinitialized speech engine")
+                            last_reinit_time = current_time
+                        except Exception as reinit_error:
+                            logger.error(f"Failed to reinitialize speech engine: {reinit_error}")
+                    
                 self.speech_queue.task_done()
             except queue.Empty:
                 pass
+            except Exception as e:
+                logger.error(f"Error in speech thread: {e}")
+                # Sleep a bit to avoid tight error loop
+                time.sleep(0.1)
     
     def log_message(self, message, level=logging.INFO):
         """
@@ -155,10 +232,14 @@ class AccessibleMenuNavigator:
             profile_path: Path to menu profile JSON file
             languages: List of language codes for OCR
         """
+        # Set the stop flag to not set
+        self.stop_requested.clear()
+        
         # Initialize speaker
         try:
             import accessible_output2.outputs.auto as ao
             self.speaker = ao.Auto()
+            logger.info("Speech system initialized")
         except ImportError:
             logger.error("Failed to import accessible_output2. Speech will not be available.")
             # Create a dummy speaker that logs instead
@@ -167,14 +248,15 @@ class AccessibleMenuNavigator:
                     logger.info(f"SPEECH: {message}")
             self.speaker = DummySpeaker()
         
-        # Initialize OCR handler
-        self.ocr_handler = OCRHandler(languages)
-        
         self.log_message("Ready!")
         self.announce("Menu Access ready")
         
-        # Initialize OCR reader in the background
-        threading.Thread(target=self.ocr_handler.initialize_reader, daemon=True).start()
+        # Set initial state for OCR
+        if self.ocr_handler is None:
+            # If OCR wasn't pre-initialized in main.py, initialize it now
+            self.ocr_handler = OCRHandler(languages)
+            # Start initialization in background
+            threading.Thread(target=self.ocr_handler.initialize_reader, daemon=True).start()
         
         self.last_menu_check = time.time()
         
@@ -206,7 +288,16 @@ class AccessibleMenuNavigator:
                 }
                 self.menu_stack = ["main_menu"]
         
+        # Make sure the speech queue is empty
+        while not self.speech_queue.empty():
+            try:
+                self.speech_queue.get_nowait()
+            except queue.Empty:
+                break
+        
         # Start worker threads
+        self.worker_threads = []
+        
         mouse_thread = threading.Thread(target=self._mouse_thread_worker, daemon=True)
         speech_thread = threading.Thread(target=self._speech_thread_worker, daemon=True)
         detection_thread = threading.Thread(target=self._menu_detection_thread_worker, daemon=True)
@@ -214,6 +305,9 @@ class AccessibleMenuNavigator:
         mouse_thread.start()
         speech_thread.start()
         detection_thread.start()
+        
+        # Keep track of threads for clean shutdown
+        self.worker_threads = [mouse_thread, speech_thread, detection_thread]
         
         # Initialize position if we have a menu
         if self.menu_stack:
@@ -224,6 +318,15 @@ class AccessibleMenuNavigator:
                 self.set_current_position(0)
         
         try:
+            # Announce OCR status
+            if self.ocr_handler and self.ocr_handler.init_complete.is_set():
+                if self.ocr_handler.init_error is None:
+                    self.announce("OCR is ready")
+                else:
+                    self.announce("OCR initialization failed. Some features may not work.")
+            else:
+                self.announce("OCR is initializing in the background")
+            
             # Set up keyboard listeners with separate listeners for press and release
             # This allows us to track modifier keys properly
             with keyboard.Listener(
@@ -231,19 +334,32 @@ class AccessibleMenuNavigator:
                 on_release=self._handle_key_release
             ) as listener:
                 listener.join()
+        except Exception as e:
+            self.log_message(f"Error in keyboard listener: {e}", logging.ERROR)
         finally:
             # Clean shutdown
-            self.stop_requested.set()
-            
-            # Wait for threads to exit (with timeout)
-            mouse_thread.join(timeout=1.0)
-            speech_thread.join(timeout=1.0)
-            detection_thread.join(timeout=1.0)
-            
-            # Clean up screen capture resources
+            self.shutdown()
+    
+    def shutdown(self):
+        """Clean shutdown of the navigator"""
+        # Signal all threads to stop
+        self.stop_requested.set()
+        
+        # Wait for threads to exit (with timeout)
+        for thread in getattr(self, 'worker_threads', []):
+            thread.join(timeout=1.0)
+        
+        # Clean up screen capture resources
+        if hasattr(self, 'condition_checker') and hasattr(self.condition_checker, 'screen_capture'):
             self.condition_checker.screen_capture.close()
-            
-            self.log_message("Exiting")
+        
+        # Clean up OCR resources
+        if hasattr(self, 'ocr_handler'):
+            if hasattr(self.ocr_handler, 'shutdown'):
+                self.ocr_handler.shutdown()
+        
+        # Final logging
+        self.log_message("Exiting MenuAccess")
     
     def get_thread_screen_capture(self):
         """
@@ -366,16 +482,26 @@ class AccessibleMenuNavigator:
     
     def _menu_detection_thread_worker(self):
         """Dedicated thread for menu detection to prevent UI blocking"""
+        # Adaptive timing for menu detection to reduce CPU usage
+        base_check_interval = 0.05  # Base interval (50ms)
+        max_check_interval = 0.5    # Maximum interval (500ms)
+        current_interval = base_check_interval
+        
+        consecutive_no_changes = 0
+        max_consecutive_no_changes = 20  # After this many checks with no change, slow down
+
         while not self.stop_requested.is_set():
             try:
                 # Skip detection if paused or mouse is moving
                 if self.pause_detection.is_set() or self.is_mouse_moving.is_set():
                     time.sleep(0.01)
+                    consecutive_no_changes = 0  # Reset counter when activity happens
+                    current_interval = base_check_interval  # Reset to faster checks
                     continue
                 
                 # Check if it's time for another detection
                 current_time = time.time()
-                if current_time - self.last_menu_check < self.menu_check_interval:
+                if current_time - self.last_menu_check < current_interval:
                     time.sleep(0.01)
                     continue
                 
@@ -388,6 +514,10 @@ class AccessibleMenuNavigator:
                 # Process result if we have one and it's different
                 if active_menu and (not self.menu_stack or active_menu != self.menu_stack[0]):
                     self.log_message(f"Detected new active menu: {active_menu}")
+                    
+                    # Menu changed, reset timing to be responsive during transitions
+                    consecutive_no_changes = 0
+                    current_interval = base_check_interval
                     
                     old_menu = self.menu_stack[0] if self.menu_stack else None
                     
@@ -486,9 +616,24 @@ class AccessibleMenuNavigator:
                         self.queue_cursor_movement(details['coordinates'], 
                                                   callback=announce_callback,
                                                   ocr_delay_ms=ocr_delay_ms)
+                else:
+                    # No change detected
+                    consecutive_no_changes += 1
+                    
+                    # Gradually slow down checks if menu hasn't changed for a while
+                    if consecutive_no_changes > max_consecutive_no_changes:
+                        # Use adaptive timing to reduce CPU usage
+                        # Increase check interval up to the maximum
+                        current_interval = min(
+                            max_check_interval, 
+                            base_check_interval * (1 + (consecutive_no_changes - max_consecutive_no_changes) / 20)
+                        )
+                    else:
+                        current_interval = base_check_interval
                 
-                # Brief pause to reduce CPU usage
-                time.sleep(0.01)
+                # Brief pause to reduce CPU usage - make it adaptive
+                sleep_time = min(0.01, current_interval / 10)  # At least sleep a bit
+                time.sleep(sleep_time)
                 
             except Exception as e:
                 self.log_message(f"Menu detection error: {e}", logging.ERROR)

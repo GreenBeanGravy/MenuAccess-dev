@@ -4,6 +4,7 @@ Screen capture functionality for the MenuAccess application
 
 import logging
 import threading
+import time
 import numpy as np
 import pyautogui
 from PIL import Image
@@ -38,24 +39,63 @@ class ScreenCapture:
         # Thread-local storage for MSS instances
         self.thread_locals = threading.local()
         
+        # Cache the last screenshot to reduce capture frequency
+        self.last_screenshot = None
+        self.last_screenshot_time = 0
+        self.screenshot_cache_ttl = 0.05  # 50ms TTL for screenshot cache
+        self.screenshot_lock = threading.Lock()
+        
+        # Throttling for CPU usage control
+        self.last_capture_time = 0
+        self.min_capture_interval = 0.01  # Minimum 10ms between captures
+        
+        # Count failures to detect persistent issues
+        self.dxcam_consecutive_failures = 0
+        self.max_consecutive_failures = 3  # Switch methods after this many failures
+        
         logger.info(f"Using {self.capture_method} for screen capture")
     
-    def capture(self, region=None):
+    def capture(self, region=None, force_new=False):
         """
         Capture a screenshot
         
         Args:
             region: Optional region to capture (x, y, width, height) or None for full screen
+            force_new: Force a new capture even if cached screenshot is available
             
         Returns:
             PIL.Image: Screenshot as PIL Image
         """
+        current_time = time.time()
+        
+        # Check if we need to throttle captures to reduce CPU usage
+        if not force_new and current_time - self.last_capture_time < self.min_capture_interval:
+            time.sleep(0.005)  # Short sleep to yield CPU
+        
+        # Use cached screenshot if available and recent enough
+        with self.screenshot_lock:
+            if not force_new and self.last_screenshot is not None and region is None:
+                if current_time - self.last_screenshot_time < self.screenshot_cache_ttl:
+                    return self.last_screenshot
+        
+        # Update capture timestamp
+        self.last_capture_time = current_time
+        
+        # Capture based on selected method
         if self.capture_method == "dxcam":
-            return self._capture_dxcam(region)
+            screenshot = self._capture_dxcam(region)
         elif self.capture_method == "mss":
-            return self._capture_mss(region)
+            screenshot = self._capture_mss(region)
         else:
-            return self._capture_pyautogui(region)
+            screenshot = self._capture_pyautogui(region)
+        
+        # Cache the full screen capture for future use
+        if region is None:
+            with self.screenshot_lock:
+                self.last_screenshot = screenshot
+                self.last_screenshot_time = current_time
+        
+        return screenshot
     
     def _capture_dxcam(self, region=None):
         """Capture using dxcam-cpp"""
@@ -73,9 +113,27 @@ class ScreenCapture:
                 frame = self.dxcam_instance.grab()
             
             if frame is None:
-                # Fallback to MSS in case of failure
-                logger.warning("dxcam capture failed, falling back to MSS")
+                # Count the failure
+                self.dxcam_consecutive_failures += 1
+                
+                # If too many consecutive failures, fall back to MSS permanently
+                if self.dxcam_consecutive_failures >= self.max_consecutive_failures:
+                    logger.warning(f"DXCam failed {self.dxcam_consecutive_failures} times in a row, switching to MSS permanently")
+                    self.capture_method = "mss" if MSS_AVAILABLE else "pyautogui"
+                    
+                    # Clean up dxcam resources
+                    if self.dxcam_instance:
+                        try:
+                            self.dxcam_instance.stop()
+                        except:
+                            pass
+                        self.dxcam_instance = None
+                
+                # Fallback to MSS for this capture
                 return self._capture_mss(region)
+            
+            # Reset failure counter on success
+            self.dxcam_consecutive_failures = 0
             
             # Convert to PIL Image
             img = Image.fromarray(frame)
@@ -83,6 +141,22 @@ class ScreenCapture:
             
         except Exception as e:
             logger.error(f"dxcam error: {e}, falling back to MSS")
+            # Count the failure
+            self.dxcam_consecutive_failures += 1
+            
+            # Switch methods if too many failures
+            if self.dxcam_consecutive_failures >= self.max_consecutive_failures:
+                logger.warning(f"DXCam failed {self.dxcam_consecutive_failures} times, switching to MSS permanently")
+                self.capture_method = "mss" if MSS_AVAILABLE else "pyautogui"
+                
+                # Clean up dxcam resources
+                if self.dxcam_instance:
+                    try:
+                        self.dxcam_instance.stop()
+                    except:
+                        pass
+                    self.dxcam_instance = None
+            
             return self._capture_mss(region)
     
     def _capture_mss(self, region=None):
@@ -131,8 +205,17 @@ class ScreenCapture:
     
     def close(self):
         """Clean up resources"""
+        # Clear cached screenshot
+        with self.screenshot_lock:
+            self.last_screenshot = None
+        
+        # Close dxcam instance
         if self.dxcam_instance:
-            self.dxcam_instance.stop()
+            try:
+                self.dxcam_instance.stop()
+            except:
+                pass
+            self.dxcam_instance = None
         
         # Close any MSS instances we've created
         if hasattr(self.thread_locals, 'mss_instance'):

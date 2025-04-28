@@ -7,6 +7,8 @@ import os
 import argparse
 import logging
 import time
+import threading
+import queue
 
 from malib.utils import setup_logging
 from malib.navigator import AccessibleMenuNavigator
@@ -100,7 +102,79 @@ def main():
     navigator.set_verbose(args.verbose)
     navigator.set_debug(args.debug)
     
+    # Initialize the OCR handler before starting the navigator
+    # This prevents crashes and improves overall stability
+    logger.info("Initializing OCR engine. Please wait...")
+    
     try:
+        # Show a loading message
+        try:
+            import accessible_output2.outputs.auto as ao
+            speaker = ao.Auto()
+            speaker.speak("Initializing OCR engine. Please wait...")
+        except ImportError:
+            print("Initializing OCR engine. Please wait...")
+        
+        # Pre-initialize OCR in a controlled manner
+        ocr_ready = threading.Event()
+        ocr_error = queue.Queue()
+        
+        def init_ocr():
+            try:
+                # Create and initialize OCR handler
+                from malib.ocr_handler import OCRHandler
+                ocr_handler = OCRHandler(ocr_languages)
+                ocr_handler.initialize_reader()
+                navigator.ocr_handler = ocr_handler
+                ocr_ready.set()
+            except Exception as e:
+                logger.error(f"OCR initialization error: {e}")
+                ocr_error.put(str(e))
+                ocr_ready.set()  # Signal that we're done even though there was an error
+        
+        # Start OCR initialization in a background thread
+        ocr_thread = threading.Thread(target=init_ocr, daemon=True)
+        ocr_thread.start()
+        
+        # Show a loading progress indication
+        progress_chars = ["|", "/", "-", "\\"]
+        progress_idx = 0
+        
+        while not ocr_ready.is_set():
+            sys.stdout.write(f"\rInitializing OCR engine {progress_chars[progress_idx]} ")
+            sys.stdout.flush()
+            progress_idx = (progress_idx + 1) % len(progress_chars)
+            time.sleep(0.1)
+        
+        sys.stdout.write("\rOCR engine initialized!       \n")
+        
+        # Check if there was an error
+        if not ocr_error.empty():
+            error_msg = ocr_error.get()
+            logger.error(f"Failed to initialize OCR: {error_msg}")
+            print(f"OCR initialization failed: {error_msg}")
+            print("MenuAccess will continue without OCR functionality.")
+            
+            try:
+                import accessible_output2.outputs.auto as ao
+                speaker = ao.Auto()
+                speaker.speak("OCR initialization failed. MenuAccess will continue without OCR functionality.")
+            except ImportError:
+                pass
+            
+            # Wait a moment to let the message be heard
+            time.sleep(3)
+        else:
+            logger.info("OCR engine successfully initialized")
+            print("OCR engine successfully initialized")
+            
+            try:
+                import accessible_output2.outputs.auto as ao
+                speaker = ao.Auto()
+                speaker.speak("OCR engine successfully initialized")
+            except ImportError:
+                pass
+        
         # Start the navigator with the specified profile and languages
         navigator.start(profile_path, ocr_languages)
     except KeyboardInterrupt:
@@ -113,6 +187,19 @@ def main():
             
         # Exit cleanly
         sys.exit(0)
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+        print(f"Fatal error: {e}")
+        
+        try:
+            import accessible_output2.outputs.auto as ao
+            speaker = ao.Auto()
+            speaker.speak(f"Fatal error occurred. MenuAccess will now exit.")
+        except ImportError:
+            pass
+        
+        # Exit with error
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
