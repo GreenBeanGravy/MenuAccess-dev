@@ -1009,5 +1009,214 @@
     ],
     "reset_index": true,
     "reset_group": "Team Size"
+  },
+  "lobby-emotes": {
+    "conditions": [
+      {
+        "type": "pixel_region_image",
+        "x1": 20,
+        "y1": 1039,
+        "x2": 227,
+        "y2": 1077,
+        "confidence": 0.8,
+        "image_data": "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"
+      }
+    ],
+    "items": [
+      [
+        [
+          965,
+          265
+        ],
+        "Emote 1",
+        "button",
+        true,
+        null,
+        "Emote Wheel",
+        [
+          {
+            "x1": 730,
+            "y1": 906,
+            "x2": 1183,
+            "y2": 967,
+            "tag": "ocr1"
+          }
+        ],
+        "{ocr1}, {type}, {index}",
+        0,
+        [],
+        15
+      ],
+      [
+        [
+          1150,
+          343
+        ],
+        "Emote 2",
+        "button",
+        true,
+        null,
+        "Emote Wheel",
+        [
+          {
+            "x1": 730,
+            "y1": 906,
+            "x2": 1183,
+            "y2": 967,
+            "tag": "ocr1"
+          }
+        ],
+        "{ocr1}, {type}, {index}",
+        0,
+        [],
+        15
+      ],
+      [
+        [
+          1230,
+          539
+        ],
+        "Emote 3",
+        "button",
+        true,
+        null,
+        "Emote Wheel",
+        [
+          {
+            "x1": 730,
+            "y1": 906,
+            "x2": 1183,
+            "y2": 967,
+            "tag": "ocr1"
+          }
+        ],
+        "{ocr1}, {type}, {index}",
+        0,
+        [],
+        15
+      ],
+      [
+        [
+          1152,
+          726
+        ],
+        "Emote 4",
+        "button",
+        true,
+        null,
+        "Emote Wheel",
+        [
+          {
+            "x1": 730,
+            "y1": 906,
+            "x2": 1183,
+            "y2": 967,
+            "tag": "ocr1"
+          }
+        ],
+        "{ocr1}, {type}, {index}",
+        0,
+        [],
+        15
+      ],
+      [
+        [
+          965,
+          802
+        ],
+        "Emote 5",
+        "button",
+        true,
+        null,
+        "Emote Wheel",
+        [
+          {
+            "x1": 730,
+            "y1": 906,
+            "x2": 1183,
+            "y2": 967,
+            "tag": "ocr1"
+          }
+        ],
+        "{ocr1}, {type}, {index}",
+        0,
+        [],
+        15
+      ],
+      [
+        [
+          768,
+          716
+        ],
+        "Emote 6",
+        "button",
+        true,
+        null,
+        "Emote Wheel",
+        [
+          {
+            "x1": 730,
+            "y1": 906,
+            "x2": 1183,
+            "y2": 967,
+            "tag": "ocr1"
+          }
+        ],
+        "{ocr1}, {type}, {index}",
+        0,
+        [],
+        15
+      ],
+      [
+        [
+          691,
+          535
+        ],
+        "Emote 7",
+        "button",
+        true,
+        null,
+        "Emote Wheel",
+        [
+          {
+            "x1": 730,
+            "y1": 906,
+            "x2": 1183,
+            "y2": 967,
+            "tag": "ocr1"
+          }
+        ],
+        "{ocr1}, {type}, {index}",
+        0,
+        [],
+        15
+      ],
+      [
+        [
+          772,
+          345
+        ],
+        "Emote 8",
+        "button",
+        true,
+        null,
+        "Emote Wheel",
+        [
+          {
+            "x1": 730,
+            "y1": 906,
+            "x2": 1183,
+            "y2": 967,
+            "tag": "ocr1"
+          }
+        ],
+        "{ocr1}, {type}, {index}",
+        0,
+        [],
+        15
+      ]
+    ],
+    "reset_index": true,
+    "reset_group": "default"
   }
 }

@@ -1,5 +1,5 @@
 """
-Main accessible menu navigator functionality
+Main accessible menu navigator functionality - Fixed OCR Delay Implementation
 """
 
 import os
@@ -321,8 +321,27 @@ class AccessibleMenuNavigator:
                 # Process command
                 if command['type'] == 'move':
                     self._move_cursor_to(command['end_pos'][0], command['end_pos'][1])
+                    
+                    # If there's a callback, execute it with OCR delay handling
+                    if 'callback' in command and command['callback']:
+                        # Apply OCR delay if specified
+                        if 'ocr_delay_ms' in command and command['ocr_delay_ms'] > 0:
+                            delay_ms = command['ocr_delay_ms']
+                            self.log_message(f"Applying OCR delay of {delay_ms}ms after mouse movement", logging.DEBUG)
+                            time.sleep(delay_ms / 1000.0)  # Convert ms to seconds
+                        
+                        # Execute the callback function
+                        callback_func = command['callback']
+                        callback_func()
+                    
                 elif command['type'] == 'click':
                     self._click_at_position(command['position'][0], command['position'][1])
+                    
+                    # If there's a callback, execute it
+                    if 'callback' in command and command['callback']:
+                        callback_func = command['callback']
+                        callback_func()
+                        
                 elif command['type'] == 'navigate':
                     self._navigate_in_direction(command['direction'])
                 elif command['type'] == 'select':
@@ -458,8 +477,15 @@ class AccessibleMenuNavigator:
                     # Update cursor position
                     details = self.get_element_details(active_menu, self.current_position)
                     if details:
-                        self.queue_cursor_movement(details['coordinates'])
-                        self.announce_element(details)
+                        # Create a callback function to handle announcing after movement
+                        def announce_callback():
+                            self.announce_element(details)
+                        
+                        # Queue cursor movement with callback and OCR delay
+                        ocr_delay_ms = details.get('ocr_delay_ms', 0)
+                        self.queue_cursor_movement(details['coordinates'], 
+                                                  callback=announce_callback,
+                                                  ocr_delay_ms=ocr_delay_ms)
                 
                 # Brief pause to reduce CPU usage
                 time.sleep(0.01)
@@ -522,15 +548,7 @@ class AccessibleMenuNavigator:
         # Get element name for better logging
         element_name = element[1] if len(element) > 1 else "Unknown"
         
-        # Check for OCR delay setting (element[10])
-        ocr_delay_ms = 0
-        if len(element) > 10:
-            ocr_delay_ms = element[10]
-            if ocr_delay_ms > 0:
-                self.log_message(f"Element {element_name} has OCR delay of {ocr_delay_ms}ms, waiting...", logging.DEBUG)
-                time.sleep(ocr_delay_ms / 1000.0)  # Convert ms to seconds
-        
-        # Log that we're starting OCR for this element
+        # Log that we're starting OCR processing for this element
         self.log_message(f"Starting OCR processing for element: {element_name}", logging.DEBUG)
         
         # Check if element has OCR regions
@@ -753,28 +771,34 @@ class AccessibleMenuNavigator:
         time.sleep(0.01)  # Minimal delay
         ctypes.windll.user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
     
-    def queue_cursor_movement(self, end_pos):
+    def queue_cursor_movement(self, end_pos, callback=None, ocr_delay_ms=0):
         """
         Add cursor movement to queue for processing by mouse thread
         
         Args:
             end_pos: Tuple of (x, y) coordinates
+            callback: Optional function to execute after movement completes
+            ocr_delay_ms: OCR delay in milliseconds to apply before callback
         """
         self.mouse_queue.put({
             'type': 'move',
-            'end_pos': end_pos
+            'end_pos': end_pos,
+            'callback': callback,
+            'ocr_delay_ms': ocr_delay_ms
         })
     
-    def queue_mouse_click(self, position):
+    def queue_mouse_click(self, position, callback=None):
         """
         Add mouse click to queue for processing by mouse thread
         
         Args:
             position: Tuple of (x, y) coordinates
+            callback: Optional function to execute after click completes
         """
         self.mouse_queue.put({
             'type': 'click',
-            'position': position
+            'position': position,
+            'callback': callback
         })
     
     def _navigate_in_direction(self, direction):
@@ -815,22 +839,37 @@ class AccessibleMenuNavigator:
                     
                     details = self.get_element_details(current_menu, self.current_position)
                     if details:
-                        self.queue_cursor_movement(details['coordinates'])
-                        self.announce_element(details)
+                        # Create a callback function to handle announcing after movement
+                        def announce_callback():
+                            self.announce_element(details)
+                        
+                        # Queue cursor movement with callback and OCR delay
+                        ocr_delay_ms = details.get('ocr_delay_ms', 0)
+                        self.queue_cursor_movement(details['coordinates'], 
+                                                  callback=announce_callback,
+                                                  ocr_delay_ms=ocr_delay_ms)
                         return
+        
+        # If we still have no items, check if there are any items at all
+        all_items = self.get_active_items_in_current_menu()
+        if not group_items and not all_items:
+            self.announce(f"No items available in this menu")
+            return
             
-            # If we still have no items, check if there are any items at all
-            all_items = self.get_active_items_in_current_menu()
-            if not all_items:
-                self.announce(f"No items available in this menu")
-                return
-                
-            # If there are items but none in any group, use the first item
+        # If there are items but none in any group, use the first item
+        if not group_items:
             self.current_position = 0
             details = self.get_element_details(current_menu, self.current_position)
             if details:
-                self.queue_cursor_movement(details['coordinates'])
-                self.announce_element(details)
+                # Create a callback function to handle announcing after movement
+                def announce_callback():
+                    self.announce_element(details)
+                
+                # Queue cursor movement with callback and OCR delay
+                ocr_delay_ms = details.get('ocr_delay_ms', 0)
+                self.queue_cursor_movement(details['coordinates'], 
+                                          callback=announce_callback,
+                                          ocr_delay_ms=ocr_delay_ms)
             return
         
         # Find the current item's position within the group
@@ -860,8 +899,15 @@ class AccessibleMenuNavigator:
         if current_menu:
             details = self.get_element_details(current_menu, self.current_position)
             if details:
-                self.queue_cursor_movement(details['coordinates'])
-                self.announce_element(details)
+                # Create a callback function to handle announcing after movement
+                def announce_callback():
+                    self.announce_element(details)
+                
+                # Queue cursor movement with callback and OCR delay
+                ocr_delay_ms = details.get('ocr_delay_ms', 0)
+                self.queue_cursor_movement(details['coordinates'], 
+                                          callback=announce_callback,
+                                          ocr_delay_ms=ocr_delay_ms)
             else:
                 self.announce("Item not found")
         else:
@@ -883,15 +929,17 @@ class AccessibleMenuNavigator:
             self.announce("Item not found")
             return
         
-        # Perform click
-        self.queue_mouse_click(details['coordinates'])
+        # Create a callback to run after the click is performed
+        def after_click_callback():
+            # Simplified announcement
+            self.announce(f"{details['name']} selected")
+            
+            # Store last position
+            if self.menu_stack:
+                self.last_positions[self.menu_stack[-1]] = self.current_position
         
-        # Simplified announcement
-        self.announce(f"{details['name']} selected")
-        
-        # Store last position
-        if self.menu_stack:
-            self.last_positions[self.menu_stack[-1]] = self.current_position
+        # Perform click with callback
+        self.queue_mouse_click(details['coordinates'], callback=after_click_callback)
     
     def _return_to_parent_menu(self):
         """Pop current menu from stack and return to previous menu"""
@@ -1068,12 +1116,23 @@ class AccessibleMenuNavigator:
         
         details = self.get_element_details(self.menu_stack[-1], position)
         if details:
-            self.queue_cursor_movement(details['coordinates'])
+            # Check if group changed
+            if details['group'] != self.current_group:
+                self.current_group = details['group']
+            
             if announce:
-                # Check if group changed
-                if details['group'] != self.current_group:
-                    self.current_group = details['group']
-                self.announce_element(details)
+                # Create a callback function to handle announcing after movement
+                def announce_callback():
+                    self.announce_element(details)
+                
+                # Queue cursor movement with callback and OCR delay
+                ocr_delay_ms = details.get('ocr_delay_ms', 0)
+                self.queue_cursor_movement(details['coordinates'], 
+                                          callback=announce_callback,
+                                          ocr_delay_ms=ocr_delay_ms)
+            else:
+                # Just move the cursor without announcing
+                self.queue_cursor_movement(details['coordinates'])
         else:
             self.announce("Item not found")
     
@@ -1207,9 +1266,19 @@ class AccessibleMenuNavigator:
                 self.current_position = 0
                 details = self.get_element_details(menu_id, 0)
                 if details:
-                    self.queue_cursor_movement(details['coordinates'])
+                    # Create a callback function to handle announcing after movement
                     if announce:
-                        self.announce_element(details)
+                        def announce_callback():
+                            self.announce_element(details)
+                        
+                        # Queue cursor movement with callback and OCR delay
+                        ocr_delay_ms = details.get('ocr_delay_ms', 0)
+                        self.queue_cursor_movement(details['coordinates'], 
+                                                 callback=announce_callback,
+                                                 ocr_delay_ms=ocr_delay_ms)
+                    else:
+                        # Just move the cursor without announcing
+                        self.queue_cursor_movement(details['coordinates'])
                 return True
         
         # Save current position in current group and menu
