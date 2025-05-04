@@ -15,6 +15,22 @@
     "items": [
       [
         [
+          110,
+          69
+        ],
+        "SEARCH",
+        "tab",
+        false,
+        "lobby-play",
+        "Tab Control",
+        [],
+        null,
+        0,
+        [],
+        0
+      ],
+      [
+        [
           186,
           73
         ],
@@ -24,7 +40,8 @@
         "lobby-play",
         "Tab Control",
         [],
-        null
+        null,
+        0
       ],
       [
         [
@@ -35,7 +52,10 @@
         "tab",
         false,
         "lobby-locker",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        20
       ],
       [
         [
@@ -46,7 +66,10 @@
         "tab",
         false,
         "lobby-shop",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        30
       ],
       [
         [
@@ -57,7 +80,10 @@
         "tab",
         false,
         "lobby-passes",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        40
       ],
       [
         [
@@ -68,7 +94,10 @@
         "tab",
         false,
         "lobby-quests",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        50
       ],
       [
         [
@@ -79,7 +108,10 @@
         "tab",
         false,
         "lobby-compete",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        60
       ],
       [
         [
@@ -90,7 +122,10 @@
         "tab",
         false,
         "lobby-career",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        70
       ],
       [
         [
@@ -101,7 +136,10 @@
         "tab",
         false,
         "lobby-vbucks",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        80
       ],
       [
         [
@@ -178,6 +216,22 @@
     "items": [
       [
         [
+          110,
+          69
+        ],
+        "SEARCH",
+        "tab",
+        false,
+        "lobby-play",
+        "Tab Control",
+        [],
+        null,
+        0,
+        [],
+        0
+      ],
+      [
+        [
           186,
           73
         ],
@@ -187,7 +241,8 @@
         "lobby-play",
         "Tab Control",
         [],
-        null
+        null,
+        0
       ],
       [
         [
@@ -198,7 +253,10 @@
         "tab",
         false,
         "lobby-locker",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        20
       ],
       [
         [
@@ -209,7 +267,10 @@
         "tab",
         false,
         "lobby-shop",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        30
       ],
       [
         [
@@ -220,7 +281,10 @@
         "tab",
         false,
         "lobby-passes",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        40
       ],
       [
         [
@@ -231,7 +295,10 @@
         "tab",
         false,
         "lobby-quests",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        50
       ],
       [
         [
@@ -242,7 +309,10 @@
         "tab",
         false,
         "lobby-compete",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        60
       ],
       [
         [
@@ -253,7 +323,10 @@
         "tab",
         false,
         "lobby-career",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        70
       ],
       [
         [
@@ -264,7 +337,10 @@
         "tab",
         false,
         "lobby-vbucks",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        80
       ]
     ]
   },
@@ -284,6 +360,22 @@
     "items": [
       [
         [
+          110,
+          69
+        ],
+        "SEARCH",
+        "tab",
+        false,
+        "lobby-play",
+        "Tab Control",
+        [],
+        null,
+        0,
+        [],
+        0
+      ],
+      [
+        [
           186,
           73
         ],
@@ -293,7 +385,8 @@
         "lobby-play",
         "Tab Control",
         [],
-        null
+        null,
+        0
       ],
       [
         [
@@ -304,7 +397,10 @@
         "tab",
         false,
         "lobby-locker",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        20
       ],
       [
         [
@@ -315,7 +411,10 @@
         "tab",
         false,
         "lobby-shop",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        30
       ],
       [
         [
@@ -326,7 +425,10 @@
         "tab",
         false,
         "lobby-passes",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        40
       ],
       [
         [
@@ -337,7 +439,10 @@
         "tab",
         false,
         "lobby-quests",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        50
       ],
       [
         [
@@ -348,7 +453,10 @@
         "tab",
         false,
         "lobby-compete",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        60
       ],
       [
         [
@@ -359,7 +467,10 @@
         "tab",
         false,
         "lobby-career",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        70
       ],
       [
         [
@@ -370,7 +481,10 @@
         "tab",
         false,
         "lobby-vbucks",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        80
       ]
     ]
   },
@@ -390,6 +504,22 @@
     "items": [
       [
         [
+          110,
+          69
+        ],
+        "SEARCH",
+        "tab",
+        false,
+        "lobby-play",
+        "Tab Control",
+        [],
+        null,
+        0,
+        [],
+        0
+      ],
+      [
+        [
           186,
           73
         ],
@@ -399,7 +529,8 @@
         "lobby-play",
         "Tab Control",
         [],
-        null
+        null,
+        0
       ],
       [
         [
@@ -410,7 +541,10 @@
         "tab",
         false,
         "lobby-locker",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        20
       ],
       [
         [
@@ -421,7 +555,10 @@
         "tab",
         false,
         "lobby-shop",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        30
       ],
       [
         [
@@ -432,7 +569,10 @@
         "tab",
         false,
         "lobby-passes",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        40
       ],
       [
         [
@@ -443,7 +583,10 @@
         "tab",
         false,
         "lobby-quests",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        50
       ],
       [
         [
@@ -454,7 +597,10 @@
         "tab",
         false,
         "lobby-compete",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        60
       ],
       [
         [
@@ -465,7 +611,10 @@
         "tab",
         false,
         "lobby-career",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        70
       ],
       [
         [
@@ -476,7 +625,10 @@
         "tab",
         false,
         "lobby-vbucks",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        80
       ]
     ]
   },
@@ -496,6 +648,22 @@
     "items": [
       [
         [
+          110,
+          69
+        ],
+        "SEARCH",
+        "tab",
+        false,
+        "lobby-play",
+        "Tab Control",
+        [],
+        null,
+        0,
+        [],
+        0
+      ],
+      [
+        [
           186,
           73
         ],
@@ -505,7 +673,8 @@
         "lobby-play",
         "Tab Control",
         [],
-        null
+        null,
+        0
       ],
       [
         [
@@ -516,7 +685,10 @@
         "tab",
         false,
         "lobby-locker",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        10
       ],
       [
         [
@@ -527,7 +699,10 @@
         "tab",
         false,
         "lobby-shop",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        20
       ],
       [
         [
@@ -538,7 +713,10 @@
         "tab",
         false,
         "lobby-passes",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        30
       ],
       [
         [
@@ -549,7 +727,10 @@
         "tab",
         false,
         "lobby-quests",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        40
       ],
       [
         [
@@ -560,7 +741,10 @@
         "tab",
         false,
         "lobby-compete",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        50
       ],
       [
         [
@@ -571,7 +755,10 @@
         "tab",
         false,
         "lobby-career",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        60
       ],
       [
         [
@@ -582,7 +769,10 @@
         "tab",
         false,
         "lobby-vbucks",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        70
       ]
     ]
   },
@@ -602,6 +792,22 @@
     "items": [
       [
         [
+          110,
+          69
+        ],
+        "SEARCH",
+        "tab",
+        false,
+        "lobby-play",
+        "Tab Control",
+        [],
+        null,
+        0,
+        [],
+        0
+      ],
+      [
+        [
           186,
           73
         ],
@@ -611,7 +817,8 @@
         "lobby-play",
         "Tab Control",
         [],
-        null
+        null,
+        0
       ],
       [
         [
@@ -622,7 +829,10 @@
         "tab",
         false,
         "lobby-locker",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        20
       ],
       [
         [
@@ -633,7 +843,10 @@
         "tab",
         false,
         "lobby-shop",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        30
       ],
       [
         [
@@ -644,7 +857,10 @@
         "tab",
         false,
         "lobby-passes",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        40
       ],
       [
         [
@@ -655,7 +871,10 @@
         "tab",
         false,
         "lobby-quests",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        50
       ],
       [
         [
@@ -666,7 +885,10 @@
         "tab",
         false,
         "lobby-compete",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        60
       ],
       [
         [
@@ -677,7 +899,10 @@
         "tab",
         false,
         "lobby-career",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        70
       ],
       [
         [
@@ -688,7 +913,10 @@
         "tab",
         false,
         "lobby-vbucks",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        80
       ]
     ]
   },
@@ -708,6 +936,22 @@
     "items": [
       [
         [
+          110,
+          69
+        ],
+        "SEARCH",
+        "tab",
+        false,
+        "lobby-play",
+        "Tab Control",
+        [],
+        null,
+        0,
+        [],
+        0
+      ],
+      [
+        [
           186,
           73
         ],
@@ -717,7 +961,8 @@
         "lobby-play",
         "Tab Control",
         [],
-        null
+        null,
+        0
       ],
       [
         [
@@ -728,7 +973,10 @@
         "tab",
         false,
         "lobby-locker",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        20
       ],
       [
         [
@@ -739,7 +987,10 @@
         "tab",
         false,
         "lobby-shop",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        30
       ],
       [
         [
@@ -750,7 +1001,10 @@
         "tab",
         false,
         "lobby-passes",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        40
       ],
       [
         [
@@ -761,7 +1015,10 @@
         "tab",
         false,
         "lobby-quests",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        50
       ],
       [
         [
@@ -772,7 +1029,10 @@
         "tab",
         false,
         "lobby-compete",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        60
       ],
       [
         [
@@ -783,7 +1043,10 @@
         "tab",
         false,
         "lobby-career",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        70
       ],
       [
         [
@@ -794,7 +1057,10 @@
         "tab",
         false,
         "lobby-vbucks",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        80
       ]
     ],
     "reset_group": "default"
@@ -815,6 +1081,22 @@
     "items": [
       [
         [
+          110,
+          69
+        ],
+        "SEARCH",
+        "tab",
+        false,
+        "lobby-play",
+        "Tab Control",
+        [],
+        null,
+        0,
+        [],
+        0
+      ],
+      [
+        [
           186,
           73
         ],
@@ -824,7 +1106,8 @@
         "lobby-play",
         "Tab Control",
         [],
-        null
+        null,
+        0
       ],
       [
         [
@@ -835,7 +1118,10 @@
         "tab",
         false,
         "lobby-locker",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        10
       ],
       [
         [
@@ -846,7 +1132,10 @@
         "tab",
         false,
         "lobby-shop",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        20
       ],
       [
         [
@@ -857,7 +1146,10 @@
         "tab",
         false,
         "lobby-passes",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        30
       ],
       [
         [
@@ -868,7 +1160,10 @@
         "tab",
         false,
         "lobby-quests",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        40
       ],
       [
         [
@@ -879,7 +1174,10 @@
         "tab",
         false,
         "lobby-compete",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        50
       ],
       [
         [
@@ -890,7 +1188,10 @@
         "tab",
         false,
         "lobby-career",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        60
       ],
       [
         [
@@ -901,7 +1202,10 @@
         "tab",
         false,
         "lobby-vbucks",
-        "Tab Control"
+        "Tab Control",
+        0,
+        0,
+        70
       ]
     ],
     "reset_group": "Tab Control"
@@ -1218,5 +1522,557 @@
     ],
     "reset_index": true,
     "reset_group": "default"
+  },
+  "lobby-search": {
+    "conditions": [
+      {
+        "type": "pixel_color",
+        "x": 114,
+        "y": 74,
+        "color": [
+          15,
+          13,
+          28
+        ],
+        "tolerance": 10
+      }
+    ],
+    "items": [
+      [
+        [
+          582,
+          199
+        ],
+        "Search",
+        "button",
+        true,
+        null,
+        "default",
+        [
+          {
+            "x1": 576,
+            "y1": 182,
+            "x2": 1008,
+            "y2": 218,
+            "tag": "ocr1"
+          }
+        ],
+        "{name}, edit box, {ocr1}, {index}",
+        0,
+        [],
+        0
+      ],
+      [
+        [
+          1322,
+          202
+        ],
+        "Clear Search",
+        "button",
+        true,
+        null,
+        "default",
+        [],
+        null,
+        0,
+        [
+          {
+            "type": "pixel_color",
+            "x": 1319,
+            "y": 199,
+            "color": [
+              15,
+              13,
+              28
+            ],
+            "tolerance": 10
+          }
+        ],
+        0
+      ]
+    ],
+    "reset_index": true,
+    "reset_group": "default"
+  },
+  "lobby-search-failed": {
+    "conditions": [
+      {
+        "type": "pixel_color",
+        "x": 114,
+        "y": 74,
+        "color": [
+          15,
+          13,
+          28
+        ],
+        "tolerance": 10
+      },
+      {
+        "type": "pixel_color",
+        "x": 741,
+        "y": 634,
+        "color": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 10
+      },
+      {
+        "type": "pixel_color",
+        "x": 1177,
+        "y": 638,
+        "color": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 10
+      }
+    ],
+    "items": [
+      [
+        [
+          582,
+          199
+        ],
+        "Search",
+        "button",
+        true,
+        null,
+        "default",
+        [
+          {
+            "x1": 576,
+            "y1": 182,
+            "x2": 1008,
+            "y2": 218,
+            "tag": "ocr1"
+          }
+        ],
+        "{name}, edit box, {ocr1}, {index}",
+        0,
+        [],
+        0
+      ],
+      [
+        [
+          1322,
+          202
+        ],
+        "Clear Search",
+        "button",
+        true,
+        null,
+        "default",
+        [],
+        null,
+        0,
+        [
+          {
+            "type": "pixel_color",
+            "x": 1319,
+            "y": 199,
+            "color": [
+              15,
+              13,
+              28
+            ],
+            "tolerance": 10
+          }
+        ],
+        0
+      ],
+      [
+        [
+          735,
+          635
+        ],
+        "NO RESULTS",
+        "button",
+        false,
+        null,
+        "default",
+        [],
+        "NO RESULTS FOUND. Please Search for a different word or phrase, text, {index}",
+        0,
+        [],
+        0
+      ]
+    ],
+    "reset_index": false
+  },
+  "lobby-search-success-creators": {
+    "conditions": [
+      {
+        "type": "pixel_color",
+        "x": 114,
+        "y": 74,
+        "color": [
+          15,
+          13,
+          28
+        ],
+        "tolerance": 10
+      },
+      {
+        "type": "pixel_color",
+        "x": 135,
+        "y": 405,
+        "color": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 10
+      },
+      {
+        "type": "pixel_color",
+        "x": 351,
+        "y": 411,
+        "color": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 10
+      }
+    ],
+    "items": [
+      [
+        [
+          582,
+          199
+        ],
+        "Search",
+        "button",
+        true,
+        null,
+        "default",
+        [
+          {
+            "x1": 576,
+            "y1": 182,
+            "x2": 1008,
+            "y2": 218,
+            "tag": "ocr1"
+          }
+        ],
+        "{name}, edit box, {ocr1}, {index}",
+        0,
+        [],
+        0
+      ],
+      [
+        [
+          1322,
+          202
+        ],
+        "Clear Search",
+        "button",
+        true,
+        null,
+        "default",
+        [],
+        null,
+        10,
+        [
+          {
+            "type": "pixel_color",
+            "x": 1319,
+            "y": 199,
+            "color": [
+              15,
+              13,
+              28
+            ],
+            "tolerance": 10
+          }
+        ],
+        0
+      ],
+      [
+        [
+          237,
+          315
+        ],
+        "Islands",
+        "tab",
+        true,
+        null,
+        "default",
+        [
+          {
+            "x1": 150,
+            "y1": 300,
+            "x2": 340,
+            "y2": 331,
+            "tag": "ocr1"
+          }
+        ],
+        "{ocr1}, {type}, {index}",
+        20,
+        [],
+        0
+      ],
+      [
+        [
+          474,
+          315
+        ],
+        "Creators",
+        "tab",
+        true,
+        null,
+        "default",
+        [
+          {
+            "x1": 388,
+            "y1": 299,
+            "x2": 578,
+            "y2": 332,
+            "tag": "ocr1"
+          }
+        ],
+        "{ocr1}, {type}, {index}",
+        30,
+        [],
+        0
+      ],
+      [
+        [
+          260,
+          524
+        ],
+        "Island 1",
+        "button",
+        true,
+        null,
+        "islands",
+        [
+          {
+            "x1": 136,
+            "y1": 507,
+            "x2": 297,
+            "y2": 561,
+            "tag": "ocr1"
+          },
+          {
+            "x1": 147,
+            "y1": 569,
+            "x2": 202,
+            "y2": 586,
+            "tag": "ocr2",
+            "conditions": [
+              {
+                "type": "pixel_color",
+                "x": 145,
+                "y": 575,
+                "color": [
+                  15,
+                  13,
+                  28
+                ],
+                "tolerance": 10
+              }
+            ]
+          }
+        ],
+        "{ocr1} with {ocr2} players, {name}, {type}, {index}",
+        50,
+        [],
+        20
+      ],
+      [
+        [
+          135,
+          407
+        ],
+        "Creators Results",
+        "button",
+        false,
+        null,
+        "default",
+        [
+          {
+            "x1": 130,
+            "y1": 420,
+            "x2": 587,
+            "y2": 443,
+            "tag": "ocr1"
+          }
+        ],
+        "{name} {ocr1}, text, {index}",
+        40,
+        [],
+        0
+      ]
+    ],
+    "reset_index": false,
+    "reset_group": "default"
+  },
+  "lobby-search-success-islands": {
+    "conditions": [
+      {
+        "type": "pixel_color",
+        "x": 114,
+        "y": 74,
+        "color": [
+          15,
+          13,
+          28
+        ],
+        "tolerance": 10
+      },
+      {
+        "type": "pixel_color",
+        "x": 136,
+        "y": 402,
+        "color": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 10
+      },
+      {
+        "type": "pixel_color",
+        "x": 331,
+        "y": 411,
+        "color": [
+          255,
+          255,
+          255
+        ],
+        "tolerance": 10
+      }
+    ],
+    "items": [
+      [
+        [
+          582,
+          199
+        ],
+        "Search",
+        "button",
+        true,
+        null,
+        "default",
+        [
+          {
+            "x1": 576,
+            "y1": 182,
+            "x2": 1008,
+            "y2": 218,
+            "tag": "ocr1"
+          }
+        ],
+        "{name}, edit box, {ocr1}, {index}",
+        0,
+        [],
+        0
+      ],
+      [
+        [
+          1322,
+          202
+        ],
+        "Clear Search",
+        "button",
+        true,
+        null,
+        "default",
+        [],
+        null,
+        0,
+        [
+          {
+            "type": "pixel_color",
+            "x": 1319,
+            "y": 199,
+            "color": [
+              15,
+              13,
+              28
+            ],
+            "tolerance": 10
+          }
+        ],
+        0
+      ],
+      [
+        [
+          237,
+          315
+        ],
+        "Islands",
+        "tab",
+        true,
+        null,
+        "default",
+        [
+          {
+            "x1": 150,
+            "y1": 300,
+            "x2": 340,
+            "y2": 331,
+            "tag": "ocr1"
+          }
+        ],
+        "{ocr1}, {type}, {index}",
+        0,
+        [],
+        0
+      ],
+      [
+        [
+          474,
+          315
+        ],
+        "Creators",
+        "tab",
+        true,
+        null,
+        "default",
+        [
+          {
+            "x1": 388,
+            "y1": 299,
+            "x2": 578,
+            "y2": 332,
+            "tag": "ocr1"
+          }
+        ],
+        "{ocr1}, {type}, {index}",
+        0,
+        [],
+        0
+      ],
+      [
+        [
+          135,
+          407
+        ],
+        "Islands Results",
+        "button",
+        false,
+        null,
+        "default",
+        [
+          {
+            "x1": 130,
+            "y1": 420,
+            "x2": 587,
+            "y2": 443,
+            "tag": "ocr1"
+          }
+        ],
+        "{name} {ocr1}, text, {index}",
+        0,
+        [],
+        0
+      ]
+    ],
+    "reset_index": false
   }
 }
