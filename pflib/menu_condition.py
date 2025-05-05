@@ -13,7 +13,16 @@ class MenuCondition:
     
     def __init__(self):
         """Initialize the condition checker"""
-        pass
+        self.verbose = False
+        self._sample_positions = {}  # Cache for sampling positions
+        
+        # Initialize ORB feature detector for image matching
+        self.orb = cv2.ORB_create(nfeatures=1000)
+        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+    
+    def set_verbose(self, verbose):
+        """Enable or disable verbose logging mode"""
+        self.verbose = verbose
     
     def check_condition(self, condition: dict, screenshot: np.ndarray) -> bool:
         """
@@ -89,7 +98,7 @@ class MenuCondition:
         screenshot: np.ndarray, 
         x: int, 
         y: int, 
-        color: list, 
+        expected_color: list, 
         tolerance: int
     ) -> bool:
         """
@@ -99,23 +108,32 @@ class MenuCondition:
             screenshot: Screenshot as numpy array
             x: X coordinate
             y: Y coordinate
-            color: RGB color to check [R, G, B]
+            expected_color: RGB color to check [R, G, B]
             tolerance: Color difference tolerance
             
         Returns:
             bool: True if pixel color matches, False otherwise
         """
         try:
-            # Get the pixel color (BGR format)
-            pixel_color = screenshot[y, x]
+            # Make sure coordinates are within bounds
+            height, width = screenshot.shape[:2]
+            if x < 0 or x >= width or y < 0 or y >= height:
+                if self.verbose:
+                    print(f"Pixel at ({x},{y}) is out of bounds for image of size {width}x{height}")
+                return False
             
-            # Convert to RGB for comparison (screenshot is BGR)
-            pixel_rgb = pixel_color[::-1]
-            
-            # Convert both colors to HSV for more perceptually relevant comparison
-            # First, convert to the format OpenCV expects (0-255 uint8)
-            pixel_rgb_cv = np.array([[pixel_rgb]], dtype=np.uint8)
-            expected_rgb_cv = np.array([[color]], dtype=np.uint8)
+            # Get the pixel color
+            if hasattr(screenshot, 'getpixel'):  # PIL Image
+                pixel_color = screenshot.getpixel((x, y))
+            else:  # NumPy array
+                pixel_color = screenshot[y, x]
+                # Convert from BGR to RGB if needed (OpenCV format)
+                if len(pixel_color) == 3:  # Only if we have a 3-channel color
+                    pixel_color = pixel_color[::-1]  # BGR to RGB
+
+            # Convert to uint8 arrays for OpenCV
+            pixel_rgb_cv = np.array([[pixel_color]], dtype=np.uint8)
+            expected_rgb_cv = np.array([[expected_color]], dtype=np.uint8)
             
             # Convert RGB to HSV
             pixel_hsv = cv2.cvtColor(pixel_rgb_cv, cv2.COLOR_RGB2HSV)[0][0]
@@ -132,9 +150,13 @@ class MenuCondition:
             # regardless of lighting changes
             weighted_diff = (h_diff * 2.0) + (abs(s1 - s2) / 2.0) + (abs(v1 - v2) / 4.0)
             
+            if self.verbose:
+                print(f"Pixel at ({x},{y}): found {pixel_color}, expected {expected_color}, diff={weighted_diff:.1f}, tolerance={tolerance}")
+            
             return weighted_diff <= tolerance
         except Exception as e:
-            print(f"Error checking pixel color: {str(e)}")
+            if self.verbose:
+                print(f"Error checking pixel color: {str(e)}")
             return False
             
     def _check_pixel_region_color(
@@ -144,7 +166,7 @@ class MenuCondition:
         y1: int, 
         x2: int, 
         y2: int, 
-        color: list, 
+        expected_color: list, 
         tolerance: int,
         threshold: float
     ) -> bool:
@@ -155,7 +177,7 @@ class MenuCondition:
             screenshot: Screenshot as numpy array
             x1, y1: Top-left coordinates
             x2, y2: Bottom-right coordinates
-            color: RGB color to check [R, G, B]
+            expected_color: RGB color to check [R, G, B]
             tolerance: Color difference tolerance
             threshold: Percentage of pixels that must match
             
@@ -163,47 +185,106 @@ class MenuCondition:
             bool: True if enough pixels match the color, False otherwise
         """
         try:
-            # Extract region
-            region = screenshot[y1:y2, x1:x2]
+            # Calculate region dimensions
+            region_width = x2 - x1
+            region_height = y2 - y1
+            region_size = region_width * region_height
             
-            # Convert BGR to RGB
-            region_rgb = region[:, :, ::-1]
+            # Get cached sampling positions or create new ones
+            cache_key = (x1, y1, x2, y2)
+            if cache_key in self._sample_positions:
+                sample_points = self._sample_positions[cache_key]
+            else:
+                # Adaptive sampling based on region size
+                if region_size > 40000:  # Large region (200x200+)
+                    # Sparse grid sampling
+                    sample_count = min(25, max(9, region_size // 4000))
+                    grid_size = int(np.sqrt(sample_count))
+                    
+                    x_step = region_width / grid_size
+                    y_step = region_height / grid_size
+                    
+                    sample_points = []
+                    for i in range(grid_size):
+                        for j in range(grid_size):
+                            px = int(x1 + (i + 0.5) * x_step)
+                            py = int(y1 + (j + 0.5) * y_step)
+                            sample_points.append((px, py))
+                elif region_size > 10000:  # Medium region
+                    # Use 9 strategic points
+                    x_step = region_width / 3
+                    y_step = region_height / 3
+                    
+                    sample_points = []
+                    for i in range(3):
+                        for j in range(3):
+                            px = int(x1 + (i + 0.5) * x_step)
+                            py = int(y1 + (j + 0.5) * y_step)
+                            sample_points.append((px, py))
+                else:  # Small region
+                    # Use 5 strategic points
+                    sample_points = [
+                        (x1, y1),                     # Top-left
+                        (x2-1, y1),                   # Top-right
+                        ((x1+x2)//2, (y1+y2)//2),     # Center
+                        (x1, y2-1),                   # Bottom-left
+                        (x2-1, y2-1)                  # Bottom-right
+                    ]
+                
+                self._sample_positions[cache_key] = sample_points
             
-            # Convert region to HSV for better color comparison
-            region_hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
+            # Calculate similarity for each sample point
+            matches = 0
+            for px, py in sample_points:
+                try:
+                    # Get color at this point
+                    if hasattr(screenshot, 'getpixel'):  # PIL Image
+                        pixel_color = screenshot.getpixel((px, py))
+                    else:  # NumPy array
+                        pixel_color = screenshot[py, px]
+                        # Convert from BGR to RGB if needed (OpenCV format)
+                        if len(pixel_color) == 3:  # Only if we have a 3-channel color
+                            pixel_color = pixel_color[::-1]  # BGR to RGB
+                    
+                    # Convert to compatible numpy array format
+                    pixel_rgb_cv = np.array([[pixel_color]], dtype=np.uint8)
+                    expected_rgb_cv = np.array([[expected_color]], dtype=np.uint8)
+                    
+                    # Convert RGB to HSV
+                    pixel_hsv = cv2.cvtColor(pixel_rgb_cv, cv2.COLOR_RGB2HSV)[0][0]
+                    expected_hsv = cv2.cvtColor(expected_rgb_cv, cv2.COLOR_RGB2HSV)[0][0]
+                    
+                    # Calculate HSV differences
+                    h1, s1, v1 = pixel_hsv.astype(float)
+                    h2, s2, v2 = expected_hsv.astype(float)
+                    
+                    # Handle hue wrapping
+                    h_diff = min(abs(h1 - h2), 180 - abs(h1 - h2))
+                    
+                    # Weight hue more than saturation and value for better color detection
+                    weighted_diff = (h_diff * 2.0) + (abs(s1 - s2) / 2.0) + (abs(v1 - v2) / 4.0)
+                    
+                    if weighted_diff <= tolerance:
+                        matches += 1
+                except Exception as e:
+                    # Skip any errors (e.g., out of bounds)
+                    if self.verbose:
+                        print(f"Error checking pixel at ({px},{py}): {str(e)}")
+                
+            # Calculate match percentage
+            match_percentage = matches / len(sample_points)
+            result = match_percentage >= threshold
             
-            # Convert expected color to HSV
-            expected_rgb_cv = np.array([[color]], dtype=np.uint8)
-            expected_hsv = cv2.cvtColor(expected_rgb_cv, cv2.COLOR_RGB2HSV)[0][0]
+            if self.verbose:
+                print(f"Region ({x1},{y1}) to ({x2},{y2}): match={match_percentage:.2f}, threshold={threshold}")
             
-            # Extract HSV channels and convert to float to avoid overflow
-            h = region_hsv[:,:,0].astype(float)
-            s = region_hsv[:,:,1].astype(float)
-            v = region_hsv[:,:,2].astype(float)
-            h_expected = float(expected_hsv[0])
-            s_expected = float(expected_hsv[1])
-            v_expected = float(expected_hsv[2])
-            
-            # Calculate hue difference (consider circular nature of hue)
-            h_diff = np.minimum(np.abs(h - h_expected), 180.0 - np.abs(h - h_expected))
-            
-            # Calculate saturation and value differences
-            s_diff = np.abs(s - s_expected)
-            v_diff = np.abs(v - v_expected)
-            
-            # Weight hue more than saturation and value
-            weighted_diffs = (h_diff * 2.0) + (s_diff / 2.0) + (v_diff / 4.0)
-            
-            # Count matching pixels
-            matching_pixels = np.count_nonzero(weighted_diffs <= tolerance)
-            total_pixels = (x2 - x1) * (y2 - y1)
-            
-            # Check if enough pixels match
-            return matching_pixels / total_pixels >= threshold
+            return result
+                
         except Exception as e:
-            print(f"Error checking pixel region color: {str(e)}")
+            if self.verbose:
+                print(f"Region color check error: {str(e)}")
             return False
-    
+                
     def _check_pixel_region_image(
         self,
         screenshot: np.ndarray,
@@ -237,72 +318,70 @@ class MenuCondition:
             # Create a PIL Image from the decoded data
             template_pil = Image.open(io.BytesIO(image_bytes))
             
-            # Convert PIL Image to numpy array
-            template = np.array(template_pil)
-            
-            # Convert RGB to BGR (OpenCV format)
-            if template.shape[2] == 3:  # If it has 3 channels (RGB)
-                template = template[:, :, ::-1]
-            
             # Extract the region from the screenshot to check
-            region = screenshot[y1:y2, x1:x2]
+            if hasattr(screenshot, 'crop'):  # PIL Image
+                region = screenshot.crop((x1, y1, x2, y2))
+                region_cv = np.array(region)
+            else:  # NumPy array
+                region = screenshot[y1:y2, x1:x2]
+                region_cv = region
+
+            # Convert PIL images to OpenCV format (numpy arrays)
+            template_cv = np.array(template_pil)
             
-            # Make sure template and region have the same size
-            if template.shape[:2] != region.shape[:2]:
-                # Resize template to match region
-                template = cv2.resize(template, (region.shape[1], region.shape[0]))
+            # Convert to grayscale for feature detection
+            if len(template_cv.shape) > 2:  # If it has 3 channels (RGB)
+                template_gray = cv2.cvtColor(template_cv, cv2.COLOR_RGB2GRAY)
+            else:
+                template_gray = template_cv
+                
+            if len(region_cv.shape) > 2:  # If it has 3 channels (RGB)
+                region_gray = cv2.cvtColor(region_cv, cv2.COLOR_RGB2GRAY)
+            else:
+                region_gray = region_cv
             
-            # Convert both to grayscale for template matching
-            template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
-            region_gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
+            # Resize template to match region if sizes don't match
+            if template_gray.shape != region_gray.shape:
+                template_gray = cv2.resize(template_gray, (region_gray.shape[1], region_gray.shape[0]))
             
-            # Template matching 
-            # Using simple sum of squared differences (TM_SQDIFF_NORMED)
-            # Lower values mean better match
-            match_result = cv2.matchTemplate(region_gray, template_gray, cv2.TM_SQDIFF_NORMED)[0, 0]
+            # Detect ORB features and compute descriptors
+            kp1, des1 = self.orb.detectAndCompute(template_gray, None)
+            kp2, des2 = self.orb.detectAndCompute(region_gray, None)
             
-            # Convert to a similarity score (0-1 where 1 is perfect match)
-            # TM_SQDIFF_NORMED returns 0 for perfect match, 1 for complete mismatch
-            # So we need to invert the scale to get our confidence
-            similarity = 1.0 - match_result
+            # If no features found, try structural similarity as fallback
+            if des1 is None or des2 is None or len(des1) < 2 or len(des2) < 2:
+                # Use structural similarity index as fallback
+                ssim_score = cv2.matchTemplate(
+                    template_gray, region_gray, cv2.TM_CCOEFF_NORMED)[0, 0]
+                
+                if self.verbose:
+                    print(f"Using template matching fallback: score={ssim_score:.3f}, threshold={confidence:.3f}")
+                
+                return ssim_score >= confidence
             
-            # Using a secondary metric based on histogram comparison for color information
-            # This helps avoid false positives from grayscale matching alone
+            # Match descriptors
+            matches = self.matcher.match(des1, des2)
             
-            # Compare histograms in HSV space for better color matching
-            region_hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
-            template_hsv = cv2.cvtColor(template, cv2.COLOR_BGR2HSV)
+            # Sort matches by distance
+            matches = sorted(matches, key=lambda x: x.distance)
             
-            # Compare histograms (using correlation method)
-            h_bins = 50
-            s_bins = 50
-            hist_size = [h_bins, s_bins]
-            # hue varies from 0 to 180, saturation from 0 to 255
-            h_ranges = [0, 180]
-            s_ranges = [0, 256]
-            ranges = h_ranges + s_ranges
-            channels = [0, 1]  # Use hue and saturation channels
+            # Calculate match ratio (number of good matches / total matches)
+            good_matches_threshold = 0.8  # Lower distance = better match
+            good_matches = [m for m in matches if m.distance < good_matches_threshold]
             
-            region_hist = cv2.calcHist([region_hsv], channels, None, hist_size, ranges)
-            template_hist = cv2.calcHist([template_hsv], channels, None, hist_size, ranges)
+            # Compute similarity score based on number of good matches
+            if len(kp1) == 0:  # Prevent division by zero
+                similarity_score = 0
+            else:
+                similarity_score = len(good_matches) / len(kp1)
             
-            # Normalize histograms
-            cv2.normalize(region_hist, region_hist, 0, 1, cv2.NORM_MINMAX)
-            cv2.normalize(template_hist, template_hist, 0, 1, cv2.NORM_MINMAX)
+            if self.verbose:
+                print(f"Image match score: {similarity_score:.3f}, confidence threshold: {confidence:.3f}")
             
-            # Compare histograms using correlation method
-            # Returns value between 0 (no correlation) and 1 (perfect match)
-            hist_match = cv2.compareHist(region_hist, template_hist, cv2.HISTCMP_CORREL)
-            
-            # Combine both metrics with weights 
-            # Template matching is more important but color should match too
-            combined_score = (similarity * 0.7) + (hist_match * 0.3)
-            
-            print(f"Image match score: {combined_score:.3f}, confidence threshold: {confidence:.3f}")
-            
-            # Check if combined score exceeds confidence threshold
-            return combined_score >= confidence
+            # Compare with the confidence threshold
+            return similarity_score >= confidence
             
         except Exception as e:
-            print(f"Error checking pixel region image: {str(e)}")
+            if self.verbose:
+                print(f"Image match error: {str(e)}")
             return False
