@@ -43,8 +43,11 @@ class AccessibleMenuNavigator:
         self.menu_group_positions = {}  # Format: {menu_id: {group_name: position}}
         self.last_announced_group = None
         
+        # OCR handler (initialized before condition_checker)
+        self.ocr_handler = None
+
         # Performance optimizations
-        self.condition_checker = MenuConditionChecker()
+        self.condition_checker = MenuConditionChecker(ocr_handler=self.ocr_handler) # Pass ocr_handler
         self.menu_check_interval = 0.05
         self.last_menu_check = 0
         self.menu_check_ongoing = False
@@ -67,11 +70,16 @@ class AccessibleMenuNavigator:
         # Track shift key state
         self.shift_pressed = False
         
-        # OCR handler
-        self.ocr_handler = None
-        
         # Last speech time for rate limiting
         self.last_speech_time = time.time()
+        
+        # Manual menu state
+        self.current_manual_menu_id = None
+
+        # FPS Counter
+        self.fps_frame_count = 0
+        self.fps_last_time = time.time()
+        self.current_fps = 0.0
     
     def set_verbose(self, verbose):
         """
@@ -255,7 +263,13 @@ class AccessibleMenuNavigator:
         if self.ocr_handler is None:
             # If OCR wasn't pre-initialized in main.py, initialize it now
             self.ocr_handler = OCRHandler(languages)
-            # Start initialization in background
+        
+        # Ensure condition_checker has the ocr_handler if it was created before ocr_handler was set
+        if self.condition_checker.ocr_handler is None:
+            self.condition_checker.ocr_handler = self.ocr_handler
+            
+        # Start OCR initialization in background if not already started
+        if not self.ocr_handler.init_complete.is_set() and not self.ocr_handler.init_started.is_set():
             threading.Thread(target=self.ocr_handler.initialize_reader, daemon=True).start()
         
         self.last_menu_check = time.time()
@@ -508,18 +522,66 @@ class AccessibleMenuNavigator:
                 # Update timestamp
                 self.last_menu_check = current_time
                 
-                # Detect active menu
-                active_menu = self.condition_checker.find_active_menu(self.menus)
+                determined_active_menu = None
+                is_manual_override = False
+
+                # Prioritize manually set menu
+                if self.current_manual_menu_id and self.current_manual_menu_id in self.menus:
+                    # Check if this manual menu itself has conditions that are met,
+                    # or if it's explicitly marked as is_manual (meaning it doesn't need conditions)
+                    manual_menu_data = self.menus.get(self.current_manual_menu_id, {})
+                    if manual_menu_data.get("is_manual", False):
+                        determined_active_menu = self.current_manual_menu_id
+                        is_manual_override = True
+                        if self.verbose:
+                            self.log_message(f"Manual menu '{determined_active_menu}' is active (is_manual flag).", logging.DEBUG)
+                    else:
+                        # If it's set as manual_menu_id but NOT is_manual, it still needs to meet its conditions
+                        if self.condition_checker.check_menu_conditions(manual_menu_data, self.condition_checker._screenshot_cache or self.get_thread_screen_capture().capture()):
+                            determined_active_menu = self.current_manual_menu_id
+                            is_manual_override = True # Considered manual because it was set via set_active_manual_menu
+                            if self.verbose:
+                                self.log_message(f"Manually-set menu '{determined_active_menu}' conditions met.", logging.DEBUG)
+                        else:
+                            # Manually set menu's conditions are not met, clear it.
+                            if self.verbose:
+                                self.log_message(f"Manually-set menu '{self.current_manual_menu_id}' conditions NOT met. Clearing.", logging.DEBUG)
+                            self.current_manual_menu_id = None # Fall through to visual detection
                 
-                # Process result if we have one and it's different
-                if active_menu and (not self.menu_stack or active_menu != self.menu_stack[0]):
-                    self.log_message(f"Detected new active menu: {active_menu}")
+                if not determined_active_menu:
+                    # Detect active menu visually if no manual menu is overriding
+                    visually_detected_menu = self.condition_checker.find_active_menu(self.menus)
+                    
+                    if visually_detected_menu:
+                        determined_active_menu = visually_detected_menu
+                        # If a visual menu is detected, it implies any prior manual override (that wasn't "is_manual" type) is superseded
+                        # unless the new visual menu is itself "is_manual"
+                        newly_detected_menu_data = self.menus.get(determined_active_menu, {})
+                        if newly_detected_menu_data.get("is_manual", False):
+                            self.current_manual_menu_id = determined_active_menu # It's an "is_manual" menu, so set it as manual
+                            is_manual_override = True # It behaves as a manual menu
+                            if self.verbose:
+                                self.log_message(f"Visually detected menu '{determined_active_menu}' is 'is_manual'. Setting as current manual.", logging.DEBUG)
+                        else:
+                            # Standard visual detection, clear any non-is_manual manual override
+                            if self.current_manual_menu_id and not self.menus.get(self.current_manual_menu_id, {}).get("is_manual", False):
+                                self.log_message(f"Visually detected menu '{determined_active_menu}' overrides previous manual menu '{self.current_manual_menu_id}'.", logging.DEBUG)
+                                self.current_manual_menu_id = None
+                
+                # Process result if we have one and it's different from current active menu
+                active_menu = determined_active_menu # Use the determined active menu for the rest of the logic
+
+                # Current active menu on stack (if any)
+                current_stack_menu = self.menu_stack[0] if self.menu_stack else None
+
+                if active_menu and active_menu != current_stack_menu:
+                    self.log_message(f"Switching to new active menu: {active_menu} (was {current_stack_menu})")
                     
                     # Menu changed, reset timing to be responsive during transitions
                     consecutive_no_changes = 0
                     current_interval = base_check_interval
                     
-                    old_menu = self.menu_stack[0] if self.menu_stack else None
+                    old_menu = current_stack_menu # Use current_stack_menu as old_menu
                     
                     # Check if we should reset the index when entering this menu
                     should_reset_index = True
@@ -634,6 +696,17 @@ class AccessibleMenuNavigator:
                 # Brief pause to reduce CPU usage - make it adaptive
                 sleep_time = min(0.01, current_interval / 10)  # At least sleep a bit
                 time.sleep(sleep_time)
+
+                # FPS Calculation
+                self.fps_frame_count += 1
+                fps_current_time = time.time()
+                fps_delta_time = fps_current_time - self.fps_last_time
+                if fps_delta_time >= 1.0:
+                    self.current_fps = self.fps_frame_count / fps_delta_time
+                    if self.verbose or self.debug:
+                        self.log_message(f"Menu Detection FPS: {self.current_fps:.2f}", logging.DEBUG)
+                    self.fps_frame_count = 0
+                    self.fps_last_time = fps_current_time
                 
             except Exception as e:
                 self.log_message(f"Menu detection error: {e}", logging.ERROR)
@@ -1665,6 +1738,32 @@ class AccessibleMenuNavigator:
             self.log_message(f"Error during key handling: {e}", logging.ERROR)
         
         return True
+
+    def set_active_manual_menu(self, menu_id):
+        """
+        Sets a menu as active manually, bypassing visual detection for it.
+        """
+        if menu_id in self.menus:
+            self.current_manual_menu_id = menu_id
+            self.log_message(f"Manual menu set to: {menu_id}", logging.INFO)
+            # Force menu detection to re-evaluate immediately
+            self.last_menu_check = 0 
+            # Announce the manual menu change (optional, could be handled by the main loop)
+            # self.announce(f"Switched to manual menu: {menu_id.replace('-', ' ')}")
+        else:
+            self.log_message(f"Attempted to set unknown manual menu: {menu_id}", logging.WARNING)
+
+    def clear_active_manual_menu(self):
+        """
+        Clears any active manual menu, allowing visual detection to resume.
+        """
+        if self.current_manual_menu_id:
+            self.log_message(f"Manual menu '{self.current_manual_menu_id}' cleared.", logging.INFO)
+            self.current_manual_menu_id = None
+            # Force menu detection to re-evaluate immediately
+            self.last_menu_check = 0
+        else:
+            self.log_message("No active manual menu to clear.", logging.INFO)
     
     def _handle_key_release(self, key):
         """

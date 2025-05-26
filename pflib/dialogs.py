@@ -189,7 +189,12 @@ class PixelColorConditionDialog(wx.Dialog):
         # Pick from screen button
         self.screen_pick_btn = wx.Button(panel, label="Pick Pixel from Screen")
         self.screen_pick_btn.Bind(wx.EVT_BUTTON, self.on_pick_from_screen)
-        vbox.Add(self.screen_pick_btn, flag=wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
+        vbox.Add(self.screen_pick_btn, flag=wx.EXPAND | wx.LEFT | wx.RIGHT, border=10)
+
+        # Negate condition checkbox
+        self.negate_cb = wx.CheckBox(panel, label="Negate Condition (Result is NOT True)")
+        self.negate_cb.SetValue(self.condition.get("negate", False))
+        vbox.Add(self.negate_cb, flag=wx.LEFT | wx.RIGHT | wx.BOTTOM, border=10)
         
         # Buttons
         button_box = wx.BoxSizer(wx.HORIZONTAL)
@@ -270,7 +275,8 @@ class PixelColorConditionDialog(wx.Dialog):
             "x": self.x_ctrl.GetValue(),
             "y": self.y_ctrl.GetValue(),
             "color": list(self.color_display.GetColor()),
-            "tolerance": self.tolerance_ctrl.GetValue()
+            "tolerance": self.tolerance_ctrl.GetValue(),
+            "negate": self.negate_cb.GetValue()
         })
         return self.condition
 
@@ -416,6 +422,11 @@ class RegionColorConditionDialog(wx.Dialog):
         
         # Add to main sizer
         vbox.Add(param_sizer, flag=wx.EXPAND | wx.ALL, border=10)
+
+        # Negate condition checkbox
+        self.negate_cb = wx.CheckBox(panel, label="Negate Condition (Result is NOT True)")
+        self.negate_cb.SetValue(self.condition.get("negate", False))
+        vbox.Add(self.negate_cb, flag=wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.EXPAND, border=10)
         
         # Buttons
         button_box = wx.BoxSizer(wx.HORIZONTAL)
@@ -723,7 +734,8 @@ class RegionColorConditionDialog(wx.Dialog):
             "y2": self.y2_ctrl.GetValue(),
             "color": list(self.color_display.GetColor()),
             "tolerance": self.tolerance_ctrl.GetValue(),
-            "threshold": self.threshold_ctrl.GetValue()
+            "threshold": self.threshold_ctrl.GetValue(),
+            "negate": self.negate_cb.GetValue()
         })
         return self.condition
 
@@ -849,6 +861,11 @@ class RegionImageConditionDialog(wx.Dialog):
         help_text = wx.StaticText(panel, label="This condition checks if the captured region image appears on screen with the specified confidence level.")
         help_text.Wrap(500)  # Wrap text to fit dialog width
         vbox.Add(help_text, flag=wx.EXPAND | wx.ALL, border=10)
+
+        # Negate condition checkbox
+        self.negate_cb = wx.CheckBox(panel, label="Negate Condition (Result is NOT True)")
+        self.negate_cb.SetValue(self.condition.get("negate", False))
+        vbox.Add(self.negate_cb, flag=wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.EXPAND, border=10)
         
         # Buttons
         button_box = wx.BoxSizer(wx.HORIZONTAL)
@@ -1128,6 +1145,7 @@ class RegionImageConditionDialog(wx.Dialog):
             "x2": self.x2_ctrl.GetValue(),
             "y2": self.y2_ctrl.GetValue(),
             "confidence": self.confidence_slider.GetValue() / 100.0,
+            "negate": self.negate_cb.GetValue()
         })
         
         # If we have a captured image, save it as base64
@@ -1571,6 +1589,242 @@ class OCRRegionDialog(wx.Dialog):
         })
         return self.ocr_region
 
+
+class OCRConditionDialog(wx.Dialog):
+    """Dialog for creating/editing an OCR text present condition"""
+
+    def __init__(self, parent, title="Add OCR Condition", condition=None):
+        super().__init__(parent, title=title, size=(500, 550)) # Adjusted size
+
+        self.condition = condition or {
+            "type": "ocr_text_present",
+            "text_to_find": "",
+            "region": [0, 0, 100, 100], # x1, y1, x2, y2
+            "languages": ["en"],
+            "case_sensitive": False,
+            "negate": False
+        }
+
+        self.screenshot = None # For region selection
+        self.cursor_tracker = get_cursor_tracker()
+
+        self.init_ui()
+        self.Center()
+
+    def init_ui(self):
+        panel = wx.Panel(self)
+        vbox = wx.BoxSizer(wx.VERTICAL)
+
+        # Text to find
+        text_box = wx.StaticBox(panel, label="Text to Find")
+        text_sizer = wx.StaticBoxSizer(text_box, wx.VERTICAL)
+        self.text_to_find_ctrl = wx.TextCtrl(panel, value=self.condition.get("text_to_find", ""))
+        text_sizer.Add(self.text_to_find_ctrl, flag=wx.EXPAND | wx.ALL, border=5)
+        vbox.Add(text_sizer, flag=wx.EXPAND | wx.ALL, border=10)
+
+        # Region coordinates group
+        coord_box = wx.StaticBox(panel, label="Region for OCR")
+        coord_sizer = wx.StaticBoxSizer(coord_box, wx.VERTICAL)
+
+        region_val = self.condition.get("region", [0,0,100,100])
+        # First row: Top-left corner
+        tl_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        x1_label = wx.StaticText(panel, label="X1:")
+        self.x1_ctrl = wx.SpinCtrl(panel, min=0, max=9999, value=str(region_val[0]))
+        y1_label = wx.StaticText(panel, label="Y1:")
+        self.y1_ctrl = wx.SpinCtrl(panel, min=0, max=9999, value=str(region_val[1]))
+        tl_sizer.Add(x1_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        tl_sizer.Add(self.x1_ctrl, proportion=1, flag=wx.RIGHT, border=10)
+        tl_sizer.Add(y1_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        tl_sizer.Add(self.y1_ctrl, proportion=1)
+
+        # Second row: Bottom-right corner
+        br_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        x2_label = wx.StaticText(panel, label="X2:")
+        self.x2_ctrl = wx.SpinCtrl(panel, min=0, max=9999, value=str(region_val[2]))
+        y2_label = wx.StaticText(panel, label="Y2:")
+        self.y2_ctrl = wx.SpinCtrl(panel, min=0, max=9999, value=str(region_val[3]))
+        br_sizer.Add(x2_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        br_sizer.Add(self.x2_ctrl, proportion=1, flag=wx.RIGHT, border=10)
+        br_sizer.Add(y2_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        br_sizer.Add(self.y2_ctrl, proportion=1)
+
+        # Select region button
+        self.region_btn = wx.Button(panel, label="Select Region on Screen")
+        self.region_btn.Bind(wx.EVT_BUTTON, self.on_select_region)
+
+        coord_sizer.Add(tl_sizer, flag=wx.EXPAND | wx.ALL, border=5)
+        coord_sizer.Add(br_sizer, flag=wx.EXPAND | wx.ALL, border=5)
+        coord_sizer.Add(self.region_btn, flag=wx.EXPAND | wx.ALL, border=5)
+        vbox.Add(coord_sizer, flag=wx.EXPAND | wx.ALL, border=10)
+        
+        # Preview for region selection (optional, can be simple text)
+        self.preview_text = wx.StaticText(panel, label="Region Preview: Not selected")
+        vbox.Add(self.preview_text, flag=wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.EXPAND, border=10)
+
+
+        # OCR Parameters
+        param_box = wx.StaticBox(panel, label="OCR Parameters")
+        param_sizer = wx.StaticBoxSizer(param_box, wx.VERTICAL)
+
+        # Languages
+        lang_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        lang_label = wx.StaticText(panel, label="Languages (e.g., en,fr):")
+        lang_val = ",".join(self.condition.get("languages", ["en"]))
+        self.languages_ctrl = wx.TextCtrl(panel, value=lang_val)
+        lang_sizer.Add(lang_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        lang_sizer.Add(self.languages_ctrl, proportion=1, flag=wx.EXPAND)
+        param_sizer.Add(lang_sizer, flag=wx.EXPAND | wx.ALL, border=5)
+
+        # Case Sensitive
+        self.case_sensitive_cb = wx.CheckBox(panel, label="Case Sensitive Search")
+        self.case_sensitive_cb.SetValue(self.condition.get("case_sensitive", False))
+        param_sizer.Add(self.case_sensitive_cb, flag=wx.ALL, border=5)
+        
+        vbox.Add(param_sizer, flag=wx.EXPAND | wx.ALL, border=10)
+
+        # Negate Condition
+        self.negate_cb = wx.CheckBox(panel, label="Negate Condition (NOT text present)")
+        self.negate_cb.SetValue(self.condition.get("negate", False))
+        vbox.Add(self.negate_cb, flag=wx.LEFT | wx.RIGHT | wx.BOTTOM | wx.EXPAND, border=10)
+
+        # Buttons
+        button_box = wx.StdDialogButtonSizer()
+        ok_button = wx.Button(panel, wx.ID_OK)
+        cancel_button = wx.Button(panel, wx.ID_CANCEL)
+        button_box.AddButton(ok_button)
+        button_box.AddButton(cancel_button)
+        button_box.Realize()
+        vbox.Add(button_box, flag=wx.ALIGN_RIGHT | wx.ALL, border=10)
+
+        panel.SetSizer(vbox)
+        self.Bind(wx.EVT_CLOSE, self.on_close)
+
+    def on_close(self, event):
+        if self.cursor_tracker.is_active:
+            self.cursor_tracker.stop_tracking()
+        event.Skip()
+
+    def on_select_region(self, event):
+        self.Iconize(True)
+        self.cursor_tracker.start_tracking()
+        try:
+            parent_frame = wx.GetTopLevelParent(self.GetParent())
+            parent_frame.SetStatusText("Click and drag to select a region. Press ESC to cancel")
+        except: pass
+        wx.CallAfter(self._do_select_region)
+
+    def _do_select_region(self):
+        overlay = wx.Dialog(None, title="Region Selector",
+                              style=wx.STAY_ON_TOP | wx.FRAME_NO_TASKBAR | wx.NO_BORDER)
+        overlay.SetTransparent(150)
+        overlay.ShowFullScreen(True)
+        self.screenshot = pyautogui.screenshot()
+        screen_width, screen_height = self.screenshot.size
+        panel = wx.Panel(overlay)
+        panel.SetSize(screen_width, screen_height)
+        selection_start = None
+        is_selecting = False
+        buffer = wx.Bitmap(screen_width, screen_height)
+
+        def draw_selection_rect():
+            dc = wx.BufferedDC(wx.ClientDC(panel), buffer)
+            dc.Clear() # Clear with transparent background
+            if selection_start and is_selecting:
+                x1_sel, y1_sel = selection_start
+                x2_sel, y2_sel = panel.ScreenToClient(wx.GetMousePosition())
+                dc.SetPen(wx.Pen(wx.RED, 2)) # Use a different color for OCR selection
+                dc.SetBrush(wx.Brush(wx.Colour(255, 0, 0, 40))) # Semi-transparent red
+                left, top = min(x1_sel, x2_sel), min(y1_sel, y2_sel)
+                width, height = abs(x2_sel - x1_sel), abs(y2_sel - y1_sel)
+                dc.DrawRectangle(left, top, width, height)
+                text = f"{width}x{height}"
+                dc.SetTextForeground(wx.WHITE)
+                dc.DrawText(text, left + 5, top + 5)
+        
+        def on_paint_overlay(evt): wx.BufferedPaintDC(panel, buffer)
+        def on_mouse_down_overlay(evt):
+            nonlocal selection_start, is_selecting
+            selection_start = evt.GetPosition()
+            is_selecting = True
+            draw_selection_rect()
+        def on_mouse_move_overlay(evt):
+            if is_selecting: draw_selection_rect()
+        def on_mouse_up_overlay(evt):
+            nonlocal is_selecting
+            if not is_selecting: return
+            is_selecting = False
+            x1_sel, y1_sel = selection_start
+            x2_sel, y2_sel = evt.GetPosition()
+            if x1_sel > x2_sel: x1_sel, x2_sel = x2_sel, x1_sel
+            if y1_sel > y2_sel: y1_sel, y2_sel = y2_sel, y1_sel
+            overlay.Close()
+            self.process_selection(x1_sel, y1_sel, x2_sel, y2_sel)
+        def on_key_down_overlay(evt):
+            if evt.GetKeyCode() == wx.WXK_ESCAPE:
+                overlay.Close()
+                self.on_selection_canceled()
+
+        panel.Bind(wx.EVT_PAINT, on_paint_overlay)
+        panel.Bind(wx.EVT_LEFT_DOWN, on_mouse_down_overlay)
+        panel.Bind(wx.EVT_MOTION, on_mouse_move_overlay)
+        panel.Bind(wx.EVT_LEFT_UP, on_mouse_up_overlay)
+        panel.Bind(wx.EVT_KEY_DOWN, on_key_down_overlay)
+        panel.SetFocus() # For key events
+
+        dc = wx.BufferedDC(None, buffer)
+        dc.Clear()
+        info_text = "Click and drag to select OCR region. Press ESC to cancel."
+        font = wx.Font(14, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD)
+        dc.SetFont(font)
+        dc.SetTextForeground(wx.WHITE)
+        text_width, text_height = dc.GetTextExtent(info_text)
+        dc.DrawText(info_text, (screen_width - text_width) // 2, 30)
+        
+        overlay.ShowModal()
+        overlay.Destroy()
+
+
+    def on_selection_canceled(self):
+        self.cursor_tracker.stop_tracking()
+        self.Iconize(False)
+        self.Raise()
+        try:
+            parent_frame = wx.GetTopLevelParent(self.GetParent())
+            parent_frame.SetStatusText("")
+        except: pass
+
+    def process_selection(self, x1, y1, x2, y2):
+        self.x1_ctrl.SetValue(x1)
+        self.y1_ctrl.SetValue(y1)
+        self.x2_ctrl.SetValue(x2)
+        self.y2_ctrl.SetValue(y2)
+        self.preview_text.SetLabel(f"Region: ({x1},{y1}) to ({x2},{y2}), Size: {x2-x1}x{y2-y1}")
+        self.cursor_tracker.stop_tracking()
+        self.Iconize(False)
+        self.Raise()
+        try:
+            parent_frame = wx.GetTopLevelParent(self.GetParent())
+            parent_frame.SetStatusText("")
+        except: pass
+
+    def get_condition(self):
+        langs_str = self.languages_ctrl.GetValue().strip()
+        languages = [lang.strip() for lang in langs_str.split(',') if lang.strip()]
+        if not languages: languages = ["en"] # Default if empty
+
+        self.condition.update({
+            "type": "ocr_text_present",
+            "text_to_find": self.text_to_find_ctrl.GetValue(),
+            "region": [
+                self.x1_ctrl.GetValue(), self.y1_ctrl.GetValue(),
+                self.x2_ctrl.GetValue(), self.y2_ctrl.GetValue()
+            ],
+            "languages": languages,
+            "case_sensitive": self.case_sensitive_cb.GetValue(),
+            "negate": self.negate_cb.GetValue()
+        })
+        return self.condition
 
 class UIElementDialog(wx.Dialog):
     """Dialog for creating/editing a UI element"""

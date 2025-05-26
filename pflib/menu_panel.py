@@ -6,7 +6,13 @@ import wx
 import wx.lib.scrolledpanel as scrolled
 import copy
 
-from pflib.dialogs import PixelColorConditionDialog, RegionColorConditionDialog, UIElementDialog
+from pflib.dialogs import (
+    PixelColorConditionDialog, 
+    RegionColorConditionDialog, 
+    UIElementDialog,
+    RegionImageConditionDialog, # Added in a previous step, ensure it's here
+    OCRConditionDialog # New dialog for OCR condition
+)
 from pflib.bulk_edit_dialog import BulkEditElementsDialog
 from pflib.condition_bulk_edit import BulkEditConditionsDialog
 
@@ -501,9 +507,11 @@ class MenuPanel(scrolled.ScrolledPanel):
         # Drag and drop state
         self.dragging = False
         self.drag_start_pos = None
-        self.drag_item_index = None
+        self.drag_item_index = -1 # Use -1 to indicate no item
         self.drag_group = False
         self.drop_indicator_line = None
+        self.potential_drag_item_index = -1 # Item potentially being dragged
+        self.potential_drag_group = False   # If the potential item is a group header
         
         # Set minimum size to prevent squishing
         self.SetMinSize((750, 600))  # ADDED: Set minimum panel size
@@ -544,7 +552,13 @@ class MenuPanel(scrolled.ScrolledPanel):
         self.reset_group_ctrl = wx.ComboBox(self, choices=standard_groups,
                                             value=self.menu_data.get("reset_group", "default"))
         option_sizer.Add(reset_group_label, flag=wx.LEFT | wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
-        option_sizer.Add(self.reset_group_ctrl, proportion=1)
+        option_sizer.Add(self.reset_group_ctrl, proportion=1, flag=wx.RIGHT, border=15) # Added border
+
+        # Manual Menu Checkbox
+        self.manual_menu_cb = wx.CheckBox(self, label="Manual Menu (no visual conditions)")
+        self.manual_menu_cb.SetValue(self.menu_data.get("is_manual", False))
+        self.manual_menu_cb.Bind(wx.EVT_CHECKBOX, self.on_manual_menu_toggled)
+        option_sizer.Add(self.manual_menu_cb, flag=wx.ALIGN_CENTER_VERTICAL)
         
         # Add options to header with proportion=1 to make it expand
         header_sizer.Add(option_sizer, proportion=1, flag=wx.LEFT, border=15)
@@ -568,8 +582,20 @@ class MenuPanel(scrolled.ScrolledPanel):
         self.main_sizer.Add(header_sizer, flag=wx.EXPAND | wx.ALL, border=10)
         
         # Conditions section
-        conditions_box = wx.StaticBox(self, label="Menu Detection Conditions")
-        conditions_sizer = wx.StaticBoxSizer(conditions_box, wx.VERTICAL)
+        self.conditions_static_box = wx.StaticBox(self, label="Menu Detection Conditions")
+        self.conditions_sizer = wx.StaticBoxSizer(self.conditions_static_box, wx.VERTICAL)
+        
+        # Conditions logic choice (AND/OR)
+        logic_sizer = wx.BoxSizer(wx.HORIZONTAL)
+        logic_label = wx.StaticText(self, label="Conditions Logic:")
+        self.conditions_logic_combo = wx.ComboBox(self, choices=["AND", "OR"],
+                                                 value=self.menu_data.get("conditions_logic", "AND"),
+                                                 style=wx.CB_READONLY)
+        self.conditions_logic_combo.Bind(wx.EVT_COMBOBOX, self.on_conditions_logic_changed)
+        
+        logic_sizer.Add(logic_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
+        logic_sizer.Add(self.conditions_logic_combo, flag=wx.ALIGN_CENTER_VERTICAL)
+        conditions_sizer.Add(logic_sizer, flag=wx.ALL | wx.EXPAND, border=5)
         
         # Add condition buttons
         btn_sizer = wx.BoxSizer(wx.HORIZONTAL)  # UPDATED: Changed to simple horizontal BoxSizer
@@ -586,6 +612,10 @@ class MenuPanel(scrolled.ScrolledPanel):
         add_region_image_btn = wx.Button(self, label="Add Region Image")
         add_region_image_btn.Bind(wx.EVT_BUTTON, self.on_add_region_image_condition)
         btn_sizer.Add(add_region_image_btn, flag=wx.RIGHT, border=5)
+
+        add_ocr_condition_btn = wx.Button(self, label="Add OCR Condition")
+        add_ocr_condition_btn.Bind(wx.EVT_BUTTON, self.on_add_ocr_condition)
+        btn_sizer.Add(add_ocr_condition_btn, flag=wx.RIGHT, border=5)
         
         paste_condition_btn = wx.Button(self, label="Paste Condition(s)")
         paste_condition_btn.Bind(wx.EVT_BUTTON, self.on_paste_condition)
@@ -611,8 +641,11 @@ class MenuPanel(scrolled.ScrolledPanel):
         # Install key event handlers for the list
         self.conditions_list.Bind(wx.EVT_KEY_DOWN, self.on_conditions_key)
         
-        conditions_sizer.Add(self.conditions_list, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
-        self.main_sizer.Add(conditions_sizer, proportion=1, flag=wx.EXPAND | wx.ALL, border=10)
+        self.conditions_sizer.Add(self.conditions_list, proportion=1, flag=wx.EXPAND | wx.ALL, border=5)
+        self.main_sizer.Add(self.conditions_sizer, proportion=1, flag=wx.EXPAND | wx.ALL, border=10)
+
+        # Set initial state of conditions section based on is_manual
+        self._update_conditions_section_state()
         
         # UI Elements section
         elements_box = wx.StaticBox(self, label="Menu UI Elements")
@@ -653,7 +686,8 @@ class MenuPanel(scrolled.ScrolledPanel):
         elements_sizer.Add(element_btn_sizer, flag=wx.EXPAND | wx.ALL, border=5)
         
         # Elements list - with wider columns and drag-and-drop support
-        self.elements_list = wx.ListCtrl(self, style=wx.LC_REPORT | wx.LC_SINGLE_SEL, size=(-1, 250))  # UPDATED: Increased height
+        # Removed wx.LC_SINGLE_SEL to enable multi-select
+        self.elements_list = wx.ListCtrl(self, style=wx.LC_REPORT, size=(-1, 250))  # UPDATED: Increased height
         self.elements_list.InsertColumn(0, "Name", width=180)
         self.elements_list.InsertColumn(1, "Type", width=100)
         self.elements_list.InsertColumn(2, "Position", width=90)
@@ -697,6 +731,85 @@ class MenuPanel(scrolled.ScrolledPanel):
         self.main_sizer.Fit(self)
         self.Layout()
 
+    def on_manual_menu_toggled(self, event):
+        """Handle toggling the 'Manual Menu' checkbox."""
+        is_manual = self.manual_menu_cb.GetValue()
+        self.menu_data["is_manual"] = is_manual
+        self.profile_editor.mark_profile_changed()
+        self._update_conditions_section_state()
+
+    def _update_conditions_section_state(self):
+        """Enable/disable the conditions section based on the 'is_manual' flag."""
+        is_manual = self.menu_data.get("is_manual", False)
+        enable_conditions = not is_manual
+
+        # Disable/Enable the StaticBox itself (visual cue)
+        self.conditions_static_box.Enable(enable_conditions)
+
+        # Explicitly enable/disable controls within the conditions sizer
+        # This is often more reliable for ensuring all controls are affected.
+        self.conditions_logic_combo.Enable(enable_conditions)
+        
+        # Iterate over buttons in btn_sizer (assuming it's stored or accessible)
+        # Assuming self.add_pixel_btn, self.add_region_btn etc. are direct children for simplicity here.
+        # A more robust way would be to iterate sizer items if they are not instance attributes.
+        
+        # Find the button sizer within conditions_sizer
+        # This assumes a certain structure, might need adjustment if layout changes
+        condition_buttons_sizer = None
+        for item in self.conditions_sizer.GetChildren():
+            sizer = item.GetSizer()
+            if sizer and isinstance(sizer, wx.BoxSizer): # Check if it's the horizontal sizer for buttons
+                 # Crude check, might need to be more specific if other BoxSizers are added
+                is_button_sizer = False
+                for s_item in sizer.GetChildren():
+                    if s_item.IsWindow() and isinstance(s_item.GetWindow(), wx.Button):
+                        is_button_sizer = True
+                        break
+                if is_button_sizer:
+                    condition_buttons_sizer = sizer
+                    break
+        
+        if condition_buttons_sizer:
+            for item in condition_buttons_sizer.GetChildren():
+                window = item.GetWindow()
+                if window: # Check if it's a window (control)
+                    window.Enable(enable_conditions)
+
+        self.conditions_list.Enable(enable_conditions)
+        
+        # Refresh to reflect visual changes
+        self.conditions_static_box.Refresh()
+        # self.Layout() # May not be needed if only enabling/disabling
+
+    def on_add_ocr_condition(self, event):
+        """Add a new OCR text present condition"""
+        dialog = OCRConditionDialog(self)
+        if dialog.ShowModal() == wx.ID_OK:
+            condition = dialog.get_condition()
+            
+            if "conditions" not in self.menu_data:
+                self.menu_data["conditions"] = []
+                
+            self.menu_data["conditions"].append(condition)
+            self.update_conditions_list()
+            self.profile_editor.mark_profile_changed()
+            
+        dialog.Destroy()
+
+    def on_conditions_logic_changed(self, event):
+        """Handle changes in the conditions logic ComboBox"""
+        selected_logic = self.conditions_logic_combo.GetValue()
+        self.menu_data["conditions_logic"] = selected_logic
+        self.profile_editor.mark_profile_changed()
+        
+        # Update status bar or provide some feedback
+        try:
+            parent_frame = wx.GetTopLevelParent(self.GetParent())
+            parent_frame.SetStatusText(f"Menu '{self.menu_id}' conditions logic set to {selected_logic}")
+        except Exception as e:
+            print(f"Error updating status text for conditions_logic: {e}") # Fallback logging
+
     def on_add_region_image_condition(self, event):
         """Add a new region image condition"""
         from pflib.dialogs import RegionImageConditionDialog
@@ -718,151 +831,160 @@ class MenuPanel(scrolled.ScrolledPanel):
     def on_element_left_down(self, event):
         """Start drag operation on left mouse button down"""
         # Get the item under cursor
-        item, flags = self.elements_list.HitTest(event.GetPosition())
-        
-        if item != -1:
-            # Check if it's a group header
-            text = self.elements_list.GetItemText(item)
-            
-            # Select the item
-            self.elements_list.Select(item)
-            
-            # Store the starting information
+        item_idx, flags = self.elements_list.HitTest(event.GetPosition())
+
+        if item_idx != -1: # Click was on an item
             self.drag_start_pos = event.GetPosition()
-            self.drag_item_index = item
-            
-            # Check if it's a group header (special format)
-            if text.startswith("---") and text.endswith("---"):
-                # It's a group header
-                self.drag_group = True
-                # Extract group name
-                self.drag_group_name = text.strip("-").strip()
-            else:
-                # It's a regular element
-                self.drag_group = False
-                # Only allow dragging if it's a real element with data
-                data_idx = self.elements_list.GetItemData(item)
-                if data_idx == -1:  # It's a separator, not a real element
-                    self.drag_item_index = None
-                    self.drag_start_pos = None
+            self.potential_drag_item_index = item_idx
+
+            text = self.elements_list.GetItemText(item_idx)
+            if text.startswith("---") and text.endswith("---"): # Group header
+                self.potential_drag_group = True
+                if hasattr(self, 'potential_drag_group_name'): # Clear previous if any
+                    delattr(self, 'potential_drag_group_name')
+                self.potential_drag_group_name = text.strip("-").strip()
+            else: # Regular item or separator
+                self.potential_drag_group = False
+                data_idx = self.elements_list.GetItemData(item_idx)
+                if data_idx == -1: # Separator
+                    self.potential_drag_item_index = -1 # Cannot drag separators
+                    self.drag_start_pos = None 
+        else: # Click was on empty space
+            self.drag_start_pos = None
+            self._clear_potential_drag_state()
         
-        event.Skip()
-    
+        event.Skip() # IMPORTANT for native selection processing
+
+    def _clear_potential_drag_state(self):
+        """Clears variables related to a potential drag operation."""
+        self.potential_drag_item_index = -1
+        self.potential_drag_group = False
+        if hasattr(self, 'potential_drag_group_name'):
+            delattr(self, 'potential_drag_group_name')
+
     def on_element_motion(self, event):
         """Handle mouse motion for drag-and-drop operations"""
-        if not self.drag_start_pos or not self.drag_item_index:
+        if not event.Dragging() or not self.drag_start_pos or self.potential_drag_item_index == -1:
+            self._clear_potential_drag_state()
             event.Skip()
             return
             
-        # Only start drag after moving a bit
-        if not self.dragging:
-            # Check if we've moved enough to start dragging
+        if not self.dragging: # If not already dragging, check if we should start
             start_pos = self.drag_start_pos
             curr_pos = event.GetPosition()
             
-            # Require at least 5 pixels of movement
-            if abs(curr_pos.x - start_pos.x) > 5 or abs(curr_pos.y - start_pos.y) > 5:
-                self.dragging = True
+            if abs(curr_pos.x - start_pos.x) > 5 or abs(curr_pos.y - start_pos.y) > 5: # Moved enough
+                # Check if the potential item is actually selected
+                item_to_drag_idx = self.potential_drag_item_index
                 
-                # Setting hand cursor
-                self.elements_list.SetCursor(wx.Cursor(wx.CURSOR_HAND))
-                
-                # Provide better visual hint for the item being dragged
-                self.elements_list.SetItemBackgroundColour(self.drag_item_index, wx.Colour(230, 230, 255))
+                is_selected = self.elements_list.IsSelected(item_to_drag_idx)
+                is_group_header_type = self.potential_drag_group
+                data_idx = self.elements_list.GetItemData(item_to_drag_idx)
+
+                # Condition to start drag:
+                # 1. It's a group header (potential_drag_group is true) OR
+                # 2. It's a regular item (data_idx != -1) AND it's selected.
+                if is_group_header_type or (data_idx != -1 and is_selected):
+                    self.dragging = True
+                    self.drag_item_index = item_to_drag_idx # Commit to this item for dragging
+                    
+                    if is_group_header_type:
+                        self.drag_group = True
+                        self.drag_group_name = self.potential_drag_group_name
+                    else:
+                        self.drag_group = False
+                    
+                    self.elements_list.SetCursor(wx.Cursor(wx.CURSOR_HAND))
+                    self.elements_list.SetItemBackgroundColour(self.drag_item_index, wx.Colour(230, 230, 255))
+                else:
+                    # Moved enough, but item not selected or not draggable type, so don't start drag.
+                    # This allows rubber-band selection to take over.
+                    self._clear_potential_drag_state()
+                    self.drag_start_pos = None # Crucial: stop considering this a drag start
+                    event.Skip() # Allow rubber-band
+                    return
         
         if self.dragging:
-            # Find potential drop position
             pos = event.GetPosition()
-            item, flags = self.elements_list.HitTest(pos)
+            item_hit_idx, flags = self.elements_list.HitTest(pos)
             
-            # Clear old indicator if it exists
             if self.drop_indicator_line is not None:
-                self.elements_list.RefreshItem(self.drop_indicator_line)
+                # Check if item index is valid before refreshing
+                if self.drop_indicator_line < self.elements_list.GetItemCount():
+                    self.elements_list.RefreshItem(self.drop_indicator_line)
                 self.drop_indicator_line = None
             
-            # Show drop indicator if over a valid item
-            if item != -1 and item != self.drag_item_index:
-                # Don't allow dropping into separators
-                data_idx = self.elements_list.GetItemData(item)
-                if data_idx != -1 or self.elements_list.GetItemText(item).startswith("---"):
-                    self.drop_indicator_line = item
-                    
-                    # Get item rectangle
-                    rect = self.elements_list.GetItemRect(item)
-                    
-                    # Draw drop indicator line
-                    dc = wx.ClientDC(self.elements_list)
+            if item_hit_idx != -1 and item_hit_idx != self.drag_item_index:
+                data_idx = self.elements_list.GetItemData(item_hit_idx)
+                if data_idx != -1 or self.elements_list.GetItemText(item_hit_idx).startswith("---"):
+                    self.drop_indicator_line = item_hit_idx
+                    rect = self.elements_list.GetItemRect(item_hit_idx)
+                    dc = wx.ClientDC(self.elements_list) # Use ClientDC for temporary drawing
                     dc.SetPen(wx.Pen(wx.BLUE, 2))
-                    
-                    # Draw at top or bottom based on position
                     if pos.y < rect.y + rect.height/2:
-                        # Draw at top
                         dc.DrawLine(rect.x, rect.y, rect.x + rect.width, rect.y)
                     else:
-                        # Draw at bottom
-                        dc.DrawLine(rect.x, rect.y + rect.height, 
-                                   rect.x + rect.width, rect.y + rect.height)
-        
-        event.Skip()
-    
+                        dc.DrawLine(rect.x, rect.y + rect.height, rect.x + rect.width, rect.y + rect.height)
+        else: # Not dragging (e.g. rubber-banding)
+            event.Skip()
+
     def on_element_left_up(self, event):
-        """Handle mouse button up to complete drag operation"""
-        if self.dragging and self.drag_item_index is not None:
-            # Find drop target
+        """Handle mouse button up to complete drag operation or selection."""
+        if self.dragging and self.drag_item_index != -1:
             pos = event.GetPosition()
-            drop_item, flags = self.elements_list.HitTest(pos)
+            drop_item_idx, flags = self.elements_list.HitTest(pos)
             
-            if drop_item != -1 and drop_item != self.drag_item_index:
-                # Get destination item data
+            if drop_item_idx != -1 and drop_item_idx != self.drag_item_index:
                 if self.drag_group:
-                    # Moving a group
-                    self.move_group(self.drag_group_name, drop_item)
-                else:
-                    # Moving an element - get actual item data index
+                    self.move_group(self.drag_group_name, drop_item_idx)
+                else: # It's a regular element
                     src_data_idx = self.elements_list.GetItemData(self.drag_item_index)
-                    if src_data_idx != -1:  # Only move real elements, not separators
-                        self.move_element(self.drag_item_index, drop_item)
+                    if src_data_idx != -1: # Ensure it's a real element
+                        self.move_element(self.drag_item_index, drop_item_idx)
             
-            # Reset drag state
             self.end_drag()
-            
-            # Update the UI
-            self.update_elements_list()
+            self.update_elements_list() # Refresh list after potential reorder
             self.profile_editor.mark_profile_changed()
         else:
-            # Reset any drag state
-            self.end_drag()
+            # Not dragging, so this is the end of a click or rubber-band selection.
+            # Native control has handled selection if event.Skip() was called correctly.
+            self.end_drag() # Clears all drag states including potential ones.
             
-        event.Skip()
-    
+        event.Skip() # Allow default processing for selection changes if any
+
     def on_element_leave_window(self, event):
         """Handle mouse leaving the window during drag"""
-        self.end_drag()
+        # If a drag operation was truly in progress (self.dragging),
+        # it's often best to cancel it or handle it based on application logic.
+        # For now, just ending the drag visuals and state.
+        if self.dragging:
+             self.end_drag() # Full cleanup of an active drag
+        else:
+            # If only a potential drag was being considered (mouse down but not moved enough)
+            self._clear_potential_drag_state()
+            self.drag_start_pos = None # Clear this as mouse is up outside
         event.Skip()
     
     def end_drag(self):
-        """Reset all drag-and-drop state"""
+        """Reset all drag-and-drop state, including potential drag."""
         if self.dragging:
-            # Setting default cursor
             self.elements_list.SetCursor(wx.Cursor(wx.CURSOR_DEFAULT))
-            
-            # Clear any highlighting
-            if self.drag_item_index is not None:
+            if self.drag_item_index != -1 and self.drag_item_index < self.elements_list.GetItemCount():
                 self.elements_list.SetItemBackgroundColour(self.drag_item_index, 
                                                           self.elements_list.GetBackgroundColour())
-            
-            # Clear drop indicator
-            if self.drop_indicator_line is not None:
+            if self.drop_indicator_line is not None and self.drop_indicator_line < self.elements_list.GetItemCount():
                 self.elements_list.RefreshItem(self.drop_indicator_line)
+                self.elements_list.Refresh() # Refresh whole list to be sure indicator is gone
         
-        # Reset all drag state
         self.dragging = False
         self.drag_start_pos = None
-        self.drag_item_index = None
+        self.drag_item_index = -1
         self.drag_group = False
         self.drop_indicator_line = None
         if hasattr(self, 'drag_group_name'):
             delattr(self, 'drag_group_name')
+        
+        self._clear_potential_drag_state() # Clear potential drag state as well
     
     def move_element(self, src_list_idx, dst_list_idx):
         """Move an element in the UI elements list, updating indices appropriately"""
@@ -1040,41 +1162,156 @@ class MenuPanel(scrolled.ScrolledPanel):
                             dst_group = text.strip("-").strip()
                             break
         
-        if dst_group is None or dst_group == group_name:
-            return False  # No valid target found or same group
+        if not self.menu_data or "items" not in self.menu_data or dragged_group_name == "default":
+            # Cannot drag the default group itself as a block to reorder relative to other groups
+            # Default group elements can be moved individually.
+            return False
+
+        # 1. Identify elements to move
+        items_to_move_details = []
+        for i, element_data_loop in enumerate(self.menu_data["items"]):
+            group = element_data_loop[5] if len(element_data_loop) > 5 else "default"
+            if group == dragged_group_name:
+                items_to_move_details.append({
+                    "data_idx": i, # Original index in self.menu_data["items"]
+                    "element_ref": element_data_loop, # Direct reference to the element
+                    "orig_sort_idx": element_data_loop[8] if len(element_data_loop) > 8 else 0
+                })
         
-        # Find all elements in the destination group
-        dst_indices = []
-        for i, element in enumerate(self.menu_data["items"]):
-            element_group = element[5] if len(element) > 5 else "default"
-            if element_group == dst_group:
-                dst_indices.append(i)
+        if not items_to_move_details: return False
+        items_to_move_details.sort(key=lambda x: x["orig_sort_idx"]) # Preserve internal order
+
+        # 2. Determine target position's reference sort index from drop_target_list_idx
+        ref_sort_index = 0
+        place_before = False # True if dragged group should go before the reference item/group
+
+        # Get the list item index where the drag started
+        # self.drag_item_index is the list index of the dragged group's header
+        original_dragged_header_list_idx = self.drag_item_index 
+
+        # Determine reference based on the item at drop_target_list_idx
+        # This needs to find the actual element or group header at drop_target_list_idx
+        # and then map that to elements in self.menu_data["items"] to get their sort indices (element[8])
+
+        # Find the element that is visually at the drop_target_list_idx
+        target_data_idx_at_drop = self.elements_list.GetItemData(drop_target_list_idx)
         
-        if not dst_indices:
-            # Destination group is empty - just add at the end
-            # First remove source elements (in reverse order)
-            for idx in sorted(src_indices, reverse=True):
-                self.menu_data["items"].pop(idx)
-            
-            # Add to the end
-            for element in src_elements:
-                self.menu_data["items"].append(element)
-        else:
-            # Destination group exists - insert before the first element of that group
-            dst_idx = min(dst_indices)
-            
-            # First remove source elements (in reverse order)
-            for idx in sorted(src_indices, reverse=True):
-                self.menu_data["items"].pop(idx)
-                if idx < dst_idx:
-                    dst_idx -= 1
-            
-            # Insert at destination
-            for i, element in enumerate(src_elements):
-                self.menu_data["items"].insert(dst_idx + i, element)
+        if target_data_idx_at_drop != -1: # Dropped onto an element
+            target_element_data = self.menu_data["items"][target_data_idx_at_drop]
+            ref_sort_index = target_element_data[8] if len(target_element_data) > 8 else 0
+            # If the dragged group header was originally below the drop target element, place_before is true
+            if original_dragged_header_list_idx > drop_target_list_idx:
+                place_before = True
+            # If it was above, place_before is false (meaning place after)
+        else: # Dropped onto a group header or separator
+            target_header_text = self.elements_list.GetItemText(drop_target_list_idx)
+            if target_header_text.startswith("---"): # Dropped onto another group's header
+                target_group_name_at_drop = target_header_text.strip("-").strip()
+                if target_group_name_at_drop == dragged_group_name: # Dropped on itself
+                    return False 
+
+                # Find min sort_index of elements in this target_group_name_at_drop
+                min_idx_in_target_group = float('inf')
+                found_elements_in_target_group = False
+                for el_data in self.menu_data["items"]:
+                    g = el_data[5] if len(el_data) > 5 else "default"
+                    if g == target_group_name_at_drop:
+                        idx_val = el_data[8] if len(el_data) > 8 else 0
+                        min_idx_in_target_group = min(min_idx_in_target_group, idx_val)
+                        found_elements_in_target_group = True
+                
+                if found_elements_in_target_group:
+                    ref_sort_index = min_idx_in_target_group
+                else: # Target group is empty, find next non-empty group or place at end
+                    # This case needs more robust handling to find a sensible ref_sort_index
+                    # For now, let's assume target group has elements or this won't work perfectly.
+                    # Fallback: use the logic for separators/empty space
+                    pass # Let it fall to the separator logic below
+
+                # If original drag was below this header, place before. Else after.
+                if original_dragged_header_list_idx > drop_target_list_idx:
+                     place_before = True
+
+            # If still not resolved (e.g. separator or ambiguous drop)
+            # try to find the nearest actual elements above and below the drop_target_list_idx
+            # to infer a sort_index. This is complex.
+            # Simplified: If we are here, it might be a separator.
+            # If original drag was below drop target, we assume we want to move up (place_before)
+            # relative to the item *after* the separator.
+            # If original drag was above, we place after the item *before* the separator.
+            if target_data_idx_at_drop == -1 and not target_header_text.startswith("---"): # separator
+                if original_dragged_header_list_idx > drop_target_list_idx: # Dragged upwards over a separator
+                    # Find next actual item or group header
+                    for i_scan in range(drop_target_list_idx + 1, self.elements_list.GetItemCount()):
+                        scan_data_idx = self.elements_list.GetItemData(i_scan)
+                        scan_text = self.elements_list.GetItemText(i_scan)
+                        if scan_data_idx != -1: # Found an element
+                            ref_sort_index = self.menu_data["items"][scan_data_idx][8] if len(self.menu_data["items"][scan_data_idx]) > 8 else 0
+                            break
+                        elif scan_text.startswith("---"): # Found a group header
+                            # Logic to get first element's index of this group
+                            # For now, this is complex, so we might not get a perfect ref_sort_index here.
+                            break 
+                    place_before = True
+                else: # Dragged downwards over a separator
+                     # Find previous actual item or group header
+                    for i_scan in range(drop_target_list_idx - 1, -1, -1):
+                        scan_data_idx = self.elements_list.GetItemData(i_scan)
+                        scan_text = self.elements_list.GetItemText(i_scan)
+                        if scan_data_idx != -1:
+                            ref_sort_index = self.menu_data["items"][scan_data_idx][8] if len(self.menu_data["items"][scan_data_idx]) > 8 else 0
+                            break
+                        elif scan_text.startswith("---"):
+                            # Logic to get last element's index of this group
+                            break
+                    place_before = False
+
+
+        # 3. Calculate new base sort index for the dragged group's items
+        # This needs to be adaptive. The goal is to shift the dragged group's items
+        # such that their sort_indices are collectively < or > ref_sort_index.
+        # A simple strategy: take ref_sort_index and add/subtract a fixed offset.
         
+        new_start_sort_index_for_group = 0
+        if place_before:
+            new_start_sort_index_for_group = ref_sort_index - (len(items_to_move_details) * 10 + 20) # Add larger buffer
+        else: # Place after
+            new_start_sort_index_for_group = ref_sort_index + 20 # Start after with a buffer
+
+        # To prevent massive gaps or negative indices without bound, some normalization might be needed,
+        # or a global re-indexing of all groups if this makes indices too weird.
+        # For now, accept potentially large/negative indices if it maintains order.
+
+        # 4. Update element[8] for items_to_move_details
+        for i, item_detail in enumerate(items_to_move_details):
+            element_to_update = item_detail["element_ref"] # Direct reference
+            while len(element_to_update) < 9: element_to_update.append(0)
+            element_to_update[8] = new_start_sort_index_for_group + (i * 10)
+
+        self.profile_editor.mark_profile_changed()
+        # Store data indices to re-select after update
+        moved_data_indices = [item_detail["data_idx"] for item_detail in items_to_move_details]
+        
+        self.update_elements_list() # This will re-sort based on new indices
+
+        # Re-select the moved items
+        new_focused_list_idx = -1
+        for i in range(self.elements_list.GetItemCount()):
+            item_data_idx = self.elements_list.GetItemData(i)
+            if item_data_idx in moved_data_indices:
+                self.elements_list.Select(i, True)
+                # Try to focus on the first item of the moved block in its new position
+                if new_focused_list_idx == -1 or (move_up and i < new_focused_list_idx) or (not move_up and i > new_focused_list_idx) :
+                     new_focused_list_idx = i
+            else:
+                self.elements_list.Select(i, False) # Deselect others for clarity
+        
+        if new_focused_list_idx != -1:
+            self.elements_list.Focus(new_focused_list_idx)
+            self.elements_list.EnsureVisible(new_focused_list_idx)
+            
         return True
-    
+
     def get_all_groups(self):
         """Get all groups used in this menu - always fresh from element data"""
         groups = set(["default"])
@@ -1176,9 +1413,86 @@ class MenuPanel(scrolled.ScrolledPanel):
         # Handle Delete key
         elif key_code == wx.WXK_DELETE:
             self.on_delete_condition(None)
+        elif event.ShiftDown() and (key_code == wx.WXK_UP or key_code == wx.WXK_DOWN):
+            self.reorder_selected_conditions(key_code == wx.WXK_UP)
         else:
             event.Skip()  # Let other handlers process this event
-    
+
+    def reorder_selected_conditions(self, move_up):
+        """Reorder selected conditions in the list up or down."""
+        selected_indices = []
+        item = self.conditions_list.GetFirstSelected()
+        while item != -1:
+            selected_indices.append(item)
+            item = self.conditions_list.GetNextSelected(item)
+
+        if not selected_indices:
+            return
+
+        conditions_data = self.menu_data.get("conditions", [])
+        if not conditions_data:
+            return
+
+        # Store the actual condition objects that are selected
+        selected_conditions_objects = [conditions_data[i] for i in selected_indices]
+
+        # Sort indices for processing: ascending for up, descending for down
+        # This helps manage index changes correctly when items are moved one by one.
+        selected_indices.sort(reverse=not move_up)
+
+        moved_count = 0
+        for current_idx in selected_indices:
+            # Calculate new index
+            new_idx = current_idx - 1 if move_up else current_idx + 1
+
+            # Check bounds
+            if 0 <= new_idx < len(conditions_data):
+                # Pop and insert
+                condition_to_move = conditions_data.pop(current_idx)
+                conditions_data.insert(new_idx, condition_to_move)
+                moved_count +=1
+            # If moving multiple items, the effective current_idx for subsequent items
+            # in the original list changes. This simple pop & insert handles one item at a time
+            # relative to its current position in the modified list.
+            # For block movement, a more complex index tracking or temporary list is needed.
+            # The current loop structure with sorted indices is designed for single-item-like moves
+            # even if multiple are selected. Let's refine for block movement.
+
+        # For block movement, it's easier to remove all selected, then re-insert at target.
+        # This simplified version moves each item individually, which might not be true "block" move
+        # if they are not contiguous. For true block, we'd find min/max selected index.
+
+        # Let's stick to individual movements for now, as true block movement with Shift+Up/Down
+        # usually means moving the whole contiguous block relative to the item above/below the block.
+        # The current loop moves selected items past one unselected item at a time.
+
+        if moved_count > 0:
+            self.update_conditions_list() # This repopulates self.conditions_list
+
+            # Re-select the moved items
+            # This is tricky because indices change. We'll find them by object identity.
+            for i in range(self.conditions_list.GetItemCount()):
+                condition_in_list = self.menu_data["conditions"][i] # Assuming update_conditions_list maps directly
+                if any(condition_in_list is obj for obj in selected_conditions_objects):
+                    self.conditions_list.Select(i, True)
+                else: # Ensure only moved items are selected if that's the desired behavior
+                    self.conditions_list.Select(i, False)
+
+
+            self.profile_editor.mark_profile_changed()
+            # Ensure the last selected/focused item is visible
+            # This might need a more specific item to focus on if multiple are selected
+            if selected_indices:
+                # Attempt to focus on the new position of the first/last moved item
+                # This is heuristic
+                first_moved_obj = selected_conditions_objects[0] if move_up else selected_conditions_objects[-1]
+                try:
+                    final_idx_of_an_item = conditions_data.index(first_moved_obj)
+                    self.conditions_list.Focus(final_idx_of_an_item)
+                    self.conditions_list.EnsureVisible(final_idx_of_an_item)
+                except ValueError:
+                    pass # Item not found, should not happen
+
     def select_all_conditions(self):
         """Select all conditions in the list"""
         for i in range(self.conditions_list.GetItemCount()):
@@ -1201,9 +1515,129 @@ class MenuPanel(scrolled.ScrolledPanel):
         # Handle Delete key
         elif key_code == wx.WXK_DELETE:
             self.on_delete_element(None)
+        elif event.ShiftDown() and (key_code == wx.WXK_UP or key_code == wx.WXK_DOWN):
+            self.reorder_selected_elements(key_code == wx.WXK_UP)
         else:
             event.Skip()  # Let other handlers process this event
-    
+
+    def reorder_selected_elements(self, move_up):
+        """Reorder selected UI elements in the list up or down by adjusting their index field."""
+        selected_list_indices = []
+        item_idx = self.elements_list.GetFirstSelected()
+        while item_idx != -1:
+            selected_list_indices.append(item_idx)
+            item_idx = self.elements_list.GetNextSelected(item_idx)
+
+        if not selected_list_indices:
+            return
+
+        # Get current visual order of all actual elements with their data and list indices
+        # This respects current filtering and sorting.
+        visual_elements = []
+        for i in range(self.elements_list.GetItemCount()):
+            data_idx = self.elements_list.GetItemData(i)
+            if data_idx != -1: # It's an actual element
+                element_data = self.menu_data["items"][data_idx]
+                visual_elements.append({
+                    "list_idx": i, 
+                    "data_idx": data_idx, 
+                    "element": element_data,
+                    "group": element_data[5] if len(element_data) > 5 else "default",
+                    "current_sort_idx": element_data[8] if len(element_data) > 8 else 0
+                })
+        
+        if not visual_elements:
+            return
+
+        # Map selected list indices to their entries in visual_elements
+        selected_visual_elements = [ve for ve in visual_elements if ve["list_idx"] in selected_list_indices]
+        if not selected_visual_elements:
+            return # No actual elements selected
+
+        # Sort selected elements by their visual order for consistent block movement
+        selected_visual_elements.sort(key=lambda ve: ve["list_idx"], reverse=not move_up)
+
+        items_moved_count = 0
+        
+        # For simplicity, this implementation will move each selected element individually
+        # relative to its non-selected neighbor in the visual list, within the same group.
+        # True block move of non-contiguous selections is more complex.
+        
+        for selected_ve in selected_visual_elements:
+            current_visual_pos = -1
+            for i, ve in enumerate(visual_elements):
+                if ve["data_idx"] == selected_ve["data_idx"]:
+                    current_visual_pos = i
+                    break
+            if current_visual_pos == -1: continue # Should not happen
+
+            target_visual_pos = current_visual_pos - 1 if move_up else current_visual_pos + 1
+
+            if 0 <= target_visual_pos < len(visual_elements):
+                target_ve = visual_elements[target_visual_pos]
+                
+                # Only swap if they are in the same group and target is not selected
+                if selected_ve["group"] == target_ve["group"] and target_ve["list_idx"] not in selected_list_indices:
+                    # Swap their sort indices (element[8])
+                    selected_element_data = self.menu_data["items"][selected_ve["data_idx"]]
+                    target_element_data = self.menu_data["items"][target_ve["data_idx"]]
+
+                    # Ensure index fields exist
+                    while len(selected_element_data) < 9: selected_element_data.append(0)
+                    while len(target_element_data) < 9: target_element_data.append(0)
+                        
+                    selected_idx_val = selected_element_data[8]
+                    target_idx_val = target_element_data[8]
+
+                    # Simple swap might not be enough if indices are not consecutive.
+                    # A better way is to ensure selected_ve's index becomes smaller/larger.
+                    if move_up: # Selected wants to move above target
+                        if selected_idx_val > target_idx_val: # If it's not already above
+                            selected_element_data[8] = target_idx_val
+                            target_element_data[8] = selected_idx_val
+                            items_moved_count += 1
+                        elif selected_idx_val == target_idx_val: # If indices are same, nudge selected one
+                            selected_element_data[8] = target_idx_val -1 # Nudge up
+                            items_moved_count += 1
+                    else: # move_down: Selected wants to move below target
+                        if selected_idx_val < target_idx_val: # If it's not already below
+                            selected_element_data[8] = target_idx_val
+                            target_element_data[8] = selected_idx_val
+                            items_moved_count += 1
+                        elif selected_idx_val == target_idx_val: # If indices are same, nudge selected one
+                            selected_element_data[8] = target_idx_val + 1 # Nudge down
+                            items_moved_count += 1
+                    
+                    # After a swap, the visual_elements list is out of sync with element[8] values.
+                    # For the next iteration, we'd need to re-evaluate visual_elements or accept
+                    # that this loop handles one "effective" move per selected item based on initial state.
+                    # For now, we'll update the data and then let update_elements_list() re-sort.
+            
+        if items_moved_count > 0:
+            self.profile_editor.mark_profile_changed()
+            
+            # Store original data_idx of selected items to re-select them
+            selected_data_indices = [ve["data_idx"] for ve in selected_visual_elements]
+            
+            self.update_elements_list() # This re-sorts and repopulates the ListCtrl
+
+            # Re-select moved items
+            new_focused_item_list_idx = -1
+            for i in range(self.elements_list.GetItemCount()):
+                item_data_idx = self.elements_list.GetItemData(i)
+                if item_data_idx in selected_data_indices:
+                    self.elements_list.Select(i, True)
+                    if new_focused_item_list_idx == -1 : # Focus on the first one (topmost if moving up, bottommost if moving down due to sort)
+                         new_focused_item_list_idx = i
+                else:
+                    # Ensure only originally selected items remain selected if that's the goal
+                    # Or, if we want to clear others, do it here. Current wx behavior is additive.
+                    pass 
+            
+            if new_focused_item_list_idx != -1:
+                self.elements_list.Focus(new_focused_item_list_idx)
+                self.elements_list.EnsureVisible(new_focused_item_list_idx)
+
     def select_all_elements(self):
         """Select all elements in the list"""
         for i in range(self.elements_list.GetItemCount()):
@@ -1220,16 +1654,69 @@ class MenuPanel(scrolled.ScrolledPanel):
     
     def on_condition_dclick(self, event):
         """Handle double-click on a condition item"""
-        self.on_edit_condition(event)
+        selected_idx = event.GetIndex() # Get item directly from event
+        if selected_idx == -1:
+            event.Skip() # Click was not on an item
+            return
+
+        # Inlined logic from on_edit_condition
+        condition = self.menu_data["conditions"][selected_idx]
+        
+        dialog = None
+        if condition["type"] == "pixel_color":
+            dialog = PixelColorConditionDialog(self, title="Edit Pixel Color Condition", 
+                                             condition=condition)
+        elif condition["type"] == "pixel_region_color":
+            dialog = RegionColorConditionDialog(self, title="Edit Region Color Condition", 
+                                              condition=condition)
+        elif condition["type"] == "pixel_region_image":
+            # Note: RegionImageConditionDialog was imported in a previous step.
+            # If it causes circular import issues, it should be imported locally in methods.
+            dialog = RegionImageConditionDialog(self, title="Edit Region Image Condition", 
+                                              condition=condition)
+        elif condition["type"] == "ocr_text_present":
+            dialog = OCRConditionDialog(self, title="Edit OCR Condition", condition=condition)
+        else:
+            wx.MessageBox(f"Cannot edit condition of type: {condition['type']}", 
+                         "Error", wx.ICON_ERROR)
+            return
+        
+        if dialog:
+            if dialog.ShowModal() == wx.ID_OK:
+                edited_condition = dialog.get_condition()
+                self.menu_data["conditions"][selected_idx] = edited_condition
+                self.update_conditions_list()
+                self.profile_editor.mark_profile_changed()
+            dialog.Destroy()
+        # event.Skip(False) # Event handled
     
     def on_element_dclick(self, event):
         """Handle double-click on an element item"""
-        # We want to distinguish between drag operations and double-clicks
-        # If we're in the middle of a drag operation, don't trigger edit
-        if self.dragging:
+        if self.dragging: # Prevent edit during drag
+            event.Skip()
             return
             
-        self.on_edit_element(event)
+        selected_item_list_idx = event.GetIndex() # Get item directly from event
+        if selected_item_list_idx == -1:
+            event.Skip() # Click was not on an item
+            return
+
+        # Inlined logic from on_edit_element
+        orig_idx = self.elements_list.GetItemData(selected_item_list_idx)
+        if orig_idx == -1: # Skip group headers and separators
+            event.Skip()
+            return
+            
+        element = self.menu_data["items"][orig_idx]
+        
+        dialog = UIElementDialog(self, title="Edit UI Element", element=element)
+        if dialog.ShowModal() == wx.ID_OK:
+            edited_element = dialog.get_element()
+            self.menu_data["items"][orig_idx] = edited_element
+            self.refresh_entire_panel() # Ensure consistency
+            self.profile_editor.mark_profile_changed()
+        dialog.Destroy()
+        # event.Skip(False) # Event handled
     
     def update_reset_group_options(self):
         """Update the available groups in the reset_group dropdown"""
@@ -1258,17 +1745,25 @@ class MenuPanel(scrolled.ScrolledPanel):
             
         for i, condition in enumerate(self.menu_data["conditions"]):
             condition_type = condition.get("type", "unknown")
+            is_negated = condition.get("negate", False)
+            negation_prefix = "NOT " if is_negated else ""
             
             if condition_type == "pixel_color":
-                details = f"({condition['x']}, {condition['y']}) = RGB{condition['color']} +/-{condition['tolerance']}"
+                details = f"{negation_prefix}({condition['x']}, {condition['y']}) = RGB{condition['color']} +/-{condition['tolerance']}"
             elif condition_type == "pixel_region_color":
-                details = f"Region ({condition['x1']}, {condition['y1']}) to ({condition['x2']}, {condition['y2']}), " \
+                details = f"{negation_prefix}Region ({condition['x1']}, {condition['y1']}) to ({condition['x2']}, {condition['y2']}), " \
                           f"RGB{condition['color']} +/-{condition['tolerance']}, thresh={condition['threshold']}"
             elif condition_type == "pixel_region_image":
-                details = f"Region ({condition['x1']}, {condition['y1']}) to ({condition['x2']}, {condition['y2']}), " \
+                details = f"{negation_prefix}Region ({condition['x1']}, {condition['y1']}) to ({condition['x2']}, {condition['y2']}), " \
                           f"confidence={condition['confidence']:.2f}, has_image={'Yes' if condition.get('image_data') else 'No'}"
+            elif condition_type == "ocr_text_present":
+                text = condition.get('text_to_find', '')
+                region = condition.get('region', '[?, ?, ?, ?]')
+                langs = ','.join(condition.get('languages', ['en']))
+                case_sensitive = condition.get('case_sensitive', False)
+                details = f"{negation_prefix}OCR: \"{text}\" in {region} (Langs: {langs}, Case: {'Yes' if case_sensitive else 'No'})"
             else:
-                details = str(condition)
+                details = f"{negation_prefix}{str(condition)}"
             
             idx = self.conditions_list.InsertItem(i, condition_type)
             self.conditions_list.SetItem(idx, 1, details)
@@ -1465,13 +1960,48 @@ class MenuPanel(scrolled.ScrolledPanel):
             self.menu_data["conditions"] = []
         
         # Get the conditions from clipboard (make deep copies)
-        count = 0
-        for condition in self.profile_editor.clipboard['conditions']:
-            self.menu_data["conditions"].append(copy.deepcopy(condition))
-            count += 1
+        pasted_conditions_objects = [copy.deepcopy(c) for c in self.profile_editor.clipboard['conditions']]
+        count = len(pasted_conditions_objects)
+
+        if not pasted_conditions_objects:
+            return
+
+        # Determine insertion index
+        last_selected_idx = -1
+        item = self.conditions_list.GetFirstSelected()
+        while item != -1:
+            last_selected_idx = item
+            item = self.conditions_list.GetNextSelected(item)
+
+        insert_at_idx = last_selected_idx + 1 if last_selected_idx != -1 else len(self.menu_data["conditions"])
+
+        # Insert items
+        for i, condition_obj in enumerate(pasted_conditions_objects):
+            self.menu_data["conditions"].insert(insert_at_idx + i, condition_obj)
         
         # Update UI
-        self.update_conditions_list()
+        self.update_conditions_list() # This also clears existing selections
+
+        # Re-select the newly pasted items
+        first_pasted_list_idx = -1
+        for i in range(self.conditions_list.GetItemCount()):
+            # Assuming menu_data["conditions"] directly maps to list items after update
+            condition_in_list_data = self.menu_data["conditions"][i] 
+            is_pasted = False
+            for pasted_obj in pasted_conditions_objects:
+                if condition_in_list_data is pasted_obj: # Check by object identity
+                    is_pasted = True
+                    break
+            
+            if is_pasted:
+                self.conditions_list.Select(i, True)
+                if first_pasted_list_idx == -1:
+                    first_pasted_list_idx = i
+        
+        if first_pasted_list_idx != -1:
+            self.conditions_list.Focus(first_pasted_list_idx)
+            self.conditions_list.EnsureVisible(first_pasted_list_idx)
+
         self.profile_editor.mark_profile_changed()
         
         # Update status
@@ -1502,6 +2032,8 @@ class MenuPanel(scrolled.ScrolledPanel):
             from pflib.dialogs import RegionImageConditionDialog  # Import here to avoid circular imports
             dialog = RegionImageConditionDialog(self, title="Edit Region Image Condition", 
                                               condition=condition)
+        elif condition["type"] == "ocr_text_present":
+            dialog = OCRConditionDialog(self, title="Edit OCR Condition", condition=condition)
         else:
             wx.MessageBox(f"Cannot edit condition of type: {condition['type']}", 
                          "Error", wx.ICON_ERROR)
@@ -1661,14 +2193,114 @@ class MenuPanel(scrolled.ScrolledPanel):
             self.menu_data["items"] = []
         
         # Get the elements from clipboard (make deep copies)
-        count = 0
-        for element in self.profile_editor.clipboard['elements']:
-            self.menu_data["items"].append(copy.deepcopy(element))
-            count += 1
+        pasted_element_objects = [copy.deepcopy(e) for e in self.profile_editor.clipboard['elements']]
+        count = len(pasted_element_objects)
+
+        if not pasted_element_objects:
+            return
+
+        # Determine insertion point and context
+        last_selected_list_idx = -1
+        item_idx = self.elements_list.GetFirstSelected()
+        while item_idx != -1:
+            # Ensure it's an actual element, not a header/separator
+            if self.elements_list.GetItemData(item_idx) != -1:
+                last_selected_list_idx = item_idx
+            item_idx = self.elements_list.GetNextSelected(item_idx)
+
+        target_data_idx = -1
+        target_group = "default" # Default group if no selection or pasted at end
+        target_sort_idx = -10 # Default sort index if appending (will be adjusted)
+
+        if last_selected_list_idx != -1:
+            target_data_idx = self.elements_list.GetItemData(last_selected_list_idx)
+            if target_data_idx != -1: # Check if it's a valid element
+                target_element = self.menu_data["items"][target_data_idx]
+                target_group = target_element[5] if len(target_element) > 5 else "default"
+                target_sort_idx = target_element[8] if len(target_element) > 8 else 0
+            else: # Selected item was a header/separator, revert to append logic
+                target_data_idx = -1 # Mark to append
+
+        # Insert elements and set their properties
+        if target_data_idx != -1: # Insert after selected element
+            # The actual insertion index into self.menu_data["items"]
+            # This list is not sorted by element[8], so direct index works.
+            # We insert them sequentially after the target_data_idx
+            actual_insert_start_idx = target_data_idx + 1
+            
+            for i, pasted_el in enumerate(pasted_element_objects):
+                # Inherit group from the target element
+                while len(pasted_el) < 6: pasted_el.append(None)
+                pasted_el[5] = target_group
+                
+                # Set initial sort index to be after the target element
+                # We'll use small increments; reindex_group_elements will clean it up.
+                while len(pasted_el) < 9: pasted_el.append(0)
+                pasted_el[8] = target_sort_idx + (i + 1) * 0.1 # Temporary small increment
+                
+                self.menu_data["items"].insert(actual_insert_start_idx + i, pasted_el)
+            
+            # Re-index the entire group to normalize sort indices
+            self.reindex_group_elements(target_group)
+
+        else: # Append to the end of the items list
+            for pasted_el in pasted_element_objects:
+                # Element retains its original group or defaults if necessary
+                current_group = pasted_el[5] if len(pasted_el) > 5 and pasted_el[5] else "default"
+                while len(pasted_el) < 6: pasted_el.append(None)
+                pasted_el[5] = current_group
+
+                # Find max sort_idx in its group to append it logically at the end
+                max_sort_idx_in_group = -1
+                for item in self.menu_data["items"]:
+                    item_grp = item[5] if len(item) > 5 and item[5] else "default"
+                    if item_grp == current_group:
+                        item_sort_idx = item[8] if len(item) > 8 else 0
+                        if item_sort_idx > max_sort_idx_in_group:
+                            max_sort_idx_in_group = item_sort_idx
+                
+                while len(pasted_el) < 9: pasted_el.append(0)
+                pasted_el[8] = max_sort_idx_in_group + 10 # Append with a gap
+
+                self.menu_data["items"].append(pasted_el)
+
+        # Refresh everything to ensure consistency (this also re-sorts visually)
+        self.profile_editor.mark_profile_changed() # Mark changed before refresh in case refresh clears selection state
         
-        # Refresh everything to ensure consistency
-        self.refresh_entire_panel()
-        self.profile_editor.mark_profile_changed()
+        # Store references to pasted objects for re-selection
+        # Note: pasted_element_objects already contains the deep-copied objects
+        
+        self.refresh_entire_panel() # This calls update_elements_list, which clears selections
+
+        # Re-select the newly pasted items
+        first_pasted_list_idx = -1
+        # We need to map the pasted objects (which are now in self.menu_data["items"])
+        # back to their new list indices in self.elements_list.
+        # GetItemData stores the index into self.menu_data["items"].
+        
+        # Create a quick lookup for pasted objects by their original data_idx if needed,
+        # but identity check is better.
+        
+        # Find the new list indices of the pasted items
+        pasted_data_indices = []
+        for pasted_obj in pasted_element_objects:
+            try:
+                # Find the index of this specific object in the (potentially reordered) menu_data items
+                pasted_data_indices.append(self.menu_data["items"].index(pasted_obj))
+            except ValueError:
+                pass # Should not happen if objects were correctly inserted
+
+        if pasted_data_indices:
+            for i in range(self.elements_list.GetItemCount()):
+                item_data_original_idx = self.elements_list.GetItemData(i)
+                if item_data_original_idx in pasted_data_indices:
+                    self.elements_list.Select(i, True)
+                    if first_pasted_list_idx == -1 or i < first_pasted_list_idx: # Try to focus the topmost one
+                        first_pasted_list_idx = i
+        
+        if first_pasted_list_idx != -1:
+            self.elements_list.Focus(first_pasted_list_idx)
+            self.elements_list.EnsureVisible(first_pasted_list_idx)
         
         # Update status
         try:
@@ -1765,6 +2397,10 @@ class MenuPanel(scrolled.ScrolledPanel):
         
         # Save the reset_group value
         self.menu_data["reset_group"] = self.reset_group_ctrl.GetValue()
+        
+        # conditions_logic is saved on change, so no specific action here,
+        # but ensuring it's part of menu_data is key.
+        # self.menu_data["conditions_logic"] = self.conditions_logic_combo.GetValue() # Already done by on_conditions_logic_changed
         
         return True
         

@@ -17,10 +17,11 @@ logger = logging.getLogger("AccessibleMenuNav")
 class MenuConditionChecker:
     """Highly optimized class for checking menu conditions with performance enhancements"""
     
-    def __init__(self):
+    def __init__(self, ocr_handler=None):
         """Initialize the condition checker with performance optimizations"""
         self.verbose = False
         self.last_active_menu = None
+        self.ocr_handler = ocr_handler
         self._cache = {}  # Cache for condition results
         self._screenshot_cache = None
         self._last_screenshot_time = 0
@@ -50,26 +51,41 @@ class MenuConditionChecker:
             bool: True if all conditions are met, False otherwise
         """
         conditions = menu_data.get("conditions", [])
+        conditions_logic = menu_data.get("conditions_logic", "AND") # Default to AND
         
         # If no conditions, return False (can't detect)
         if not conditions:
             return False
         
-        # Quick check each condition, exit early on failure
-        for i, condition in enumerate(conditions):
-            # Use cached result if available and recent
-            cache_key = (id(condition), self._last_screenshot_time)
-            if cache_key in self._cache:
-                result = self._cache[cache_key]
-            else:
-                result = self._check_condition(condition, screenshot_pil)
-                self._cache[cache_key] = result
-            
-            if not result:
-                return False
+        if conditions_logic == "OR":
+            # For OR logic, return True if any condition is met
+            for i, condition in enumerate(conditions):
+                cache_key = (id(condition), self._last_screenshot_time)
+                if cache_key in self._cache:
+                    result = self._cache[cache_key]
+                else:
+                    result = self._check_condition(condition, screenshot_pil)
+                    self._cache[cache_key] = result
                 
-        # All conditions passed
-        return True
+                if result:
+                    return True # Any condition met
+            return False # No conditions met
+        else: # Default to AND logic
+            # Quick check each condition, exit early on failure
+            for i, condition in enumerate(conditions):
+                # Use cached result if available and recent
+                cache_key = (id(condition), self._last_screenshot_time)
+                if cache_key in self._cache:
+                    result = self._cache[cache_key]
+                else:
+                    result = self._check_condition(condition, screenshot_pil)
+                    self._cache[cache_key] = result
+                
+                if not result:
+                    return False
+                    
+            # All conditions passed (for AND logic)
+            return True
     
     def _check_condition(self, condition, screenshot_pil):
         """
@@ -84,6 +100,9 @@ class MenuConditionChecker:
         """
         if not condition:
             return False
+        
+        should_negate = condition.get("negate", False)
+        actual_result = False
             
         condition_type = condition.get("type", "")
         
@@ -132,11 +151,11 @@ class MenuConditionChecker:
                 if self.verbose:
                     logger.debug(f"Pixel at ({x},{y}): found {pixel_color}, expected {expected_color}, diff={weighted_diff:.1f}, tolerance={tolerance}")
                 
-                return weighted_diff <= tolerance
+                actual_result = weighted_diff <= tolerance
             except Exception as e:
                 if self.verbose:
                     logger.error(f"Pixel check error: {str(e)}")
-                return False
+                actual_result = False
                 
         elif condition_type == "pixel_region_color":
             try:
@@ -244,12 +263,12 @@ class MenuConditionChecker:
                 if self.verbose:
                     logger.debug(f"Region ({x1},{y1}) to ({x2},{y2}): match={match_percentage:.2f}, threshold={threshold}")
                 
-                return result
+                actual_result = result
                 
             except Exception as e:
                 if self.verbose:
                     logger.error(f"Region color check error: {str(e)}")
-                return False
+                actual_result = False
                 
         elif condition_type == "pixel_region_image":
             try:
@@ -311,15 +330,77 @@ class MenuConditionChecker:
                     logger.debug(f"Image match score: {similarity:.3f}, confidence threshold: {confidence:.3f}")
                 
                 # Compare with the confidence threshold
-                return similarity >= confidence
+                actual_result = similarity >= confidence
                 
             except Exception as e:
                 if self.verbose:
                     logger.error(f"Image match error: {str(e)}")
-                return False
+                actual_result = False
         
-        # Unknown condition type
-        return False
+        elif condition_type == "ocr_text_present":
+            if not self.ocr_handler:
+                logger.warning("OCR handler not available to MenuConditionChecker for ocr_text_present condition.")
+                actual_result = False
+            else:
+                try:
+                    text_to_find = condition.get("text_to_find", "")
+                    region = condition.get("region", [0,0,0,0]) # x1, y1, x2, y2
+                    languages = condition.get("languages", ["en"])
+                    case_sensitive = condition.get("case_sensitive", False)
+
+                    # Validate region
+                    if not (isinstance(region, list) and len(region) == 4 and 
+                            all(isinstance(n, int) for n in region)):
+                        logger.warning(f"Invalid region format for ocr_text_present: {region}")
+                        actual_result = False
+                    elif not text_to_find:
+                         logger.warning(f"Empty text_to_find for ocr_text_present.")
+                         actual_result = False # Or True if empty string means "any text"? For now, False.
+                    else:
+                        # Crop the region from the screenshot_pil
+                        # Ensure region coordinates are valid for the screenshot size
+                        img_width, img_height = screenshot_pil.size
+                        x1, y1, x2, y2 = region
+                        
+                        # Clamp coordinates to be within image bounds
+                        x1 = max(0, min(x1, img_width -1))
+                        y1 = max(0, min(y1, img_height -1))
+                        x2 = max(0, min(x2, img_width))
+                        y2 = max(0, min(y2, img_height))
+
+                        if x1 >= x2 or y1 >= y2:
+                            logger.warning(f"Invalid region coordinates ({region}) for ocr_text_present after clamping for image size {img_width}x{img_height}.")
+                            actual_result = False
+                        else:
+                            # The OCRHandler's extract_text expects a PIL image of the region
+                            # However, recognize_text_in_region expects the full screenshot and coordinates
+                            # Let's assume extract_text is the one to use if we already have a region from condition
+                            # No, looking at ocr_handler.py, recognize_text_in_region is more suitable
+                            # as it handles the cropping internally.
+                            
+                            recognized_text = self.ocr_handler.recognize_text_in_region(
+                                screenshot_pil, 
+                                region_coords=(x1, y1, x2, y2), 
+                                languages=languages
+                            )
+                            
+                            if self.verbose:
+                                logger.debug(f"OCR found '{recognized_text}' in region {region} for condition text '{text_to_find}'")
+
+                            if case_sensitive:
+                                actual_result = text_to_find in recognized_text
+                            else:
+                                actual_result = text_to_find.lower() in recognized_text.lower()
+                
+                except Exception as e:
+                    if self.verbose:
+                        logger.error(f"OCR text present check error: {str(e)}")
+                    actual_result = False
+        else:
+            # Unknown condition type
+            actual_result = False
+
+        return not actual_result if should_negate else actual_result
     
     def find_active_menu(self, all_menus):
         """
