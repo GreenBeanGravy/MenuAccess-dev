@@ -9,816 +9,563 @@ import os
 import time
 import threading
 import numpy as np
-import pyautogui
 import copy
 
 from pflib.utils import APP_TITLE, APP_VERSION
 from pflib.menu_panel import MenuPanel
-from pflib.menu_condition import MenuCondition
+from pflib.menu_condition import MenuCondition # For test menu
+from pflib.ocr_handler import OCRHandler # For test menu with OCR conditions
+from malib.screen_capture import ScreenCapture  # Use unified screen capture
+from PIL import Image
 
 class ProfileEditorFrame(wx.Frame):
     """Main frame for the profile editor application"""
     
     def __init__(self, parent, title):
-        super().__init__(parent, title=f"{title} v{APP_VERSION}", size=(800, 700))
+        super().__init__(parent, title=f"{title} v{APP_VERSION}", size=(850, 750)) # Increased size
         
         self.profile_data = {}
         self.current_file = None
         self.is_changed = False
         self.clipboard = {
             'menu': None,
-            'conditions': [],  # Now a list for multiple items
-            'elements': []     # Now a list for multiple items
+            'conditions': [],
+            'elements': []
         }
         
-        # Create the profiles directory if it doesn't exist
-        # Get the directory where the script is located
-        script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) # pflib parent
         self.profiles_dir = os.path.join(script_dir, 'profiles')
         os.makedirs(self.profiles_dir, exist_ok=True)
+
+        # Initialize unified screen capture for editor
+        self.screen_capture = ScreenCapture()
+
+        # Initialize OCR Handler for the editor (used by "Test Menu")
+        # For simplicity, using default 'en'. Could be made configurable.
+        self.editor_ocr_handler = OCRHandler(['en'])
+        # Start OCR initialization in background if not already done
+        if not self.editor_ocr_handler.init_complete.is_set():
+             threading.Thread(target=self.editor_ocr_handler.initialize_reader, daemon=True).start()
         
         self.init_ui()
         
-        # Create a global keyboard shortcut table
         accel_tbl = wx.AcceleratorTable([
             (wx.ACCEL_CTRL, ord('S'), wx.ID_SAVE),
+            (wx.ACCEL_CTRL, ord('O'), wx.ID_OPEN),
+            (wx.ACCEL_CTRL, ord('N'), wx.ID_NEW),
+            # Add more shortcuts as needed, e.g., for copy/paste if global handling is desired
         ])
         self.SetAcceleratorTable(accel_tbl)
         
-        # Bind keyboard events
         self.Bind(wx.EVT_MENU, self.on_save, id=wx.ID_SAVE)
+        self.Bind(wx.EVT_MENU, self.on_open, id=wx.ID_OPEN)
+        self.Bind(wx.EVT_MENU, self.on_new, id=wx.ID_NEW)
         
         self.Center()
         
-        # Initialize with default main_menu
-        self.add_menu("main_menu")
-        
-        # Load config and check for last profile
+        # Initialize with default main_menu if no last profile is loaded
         config = self.load_config()
         last_profile = config.get('last_profile')
+        loaded_last = False
         
         if last_profile and os.path.exists(last_profile):
-            # Ask if the user wants to open the last profile
             message = f"Do you want to open your last profile?\n\n{os.path.basename(last_profile)}"
             dlg = wx.MessageDialog(self, message, "Open Last Profile", wx.YES_NO | wx.ICON_QUESTION)
             result = dlg.ShowModal()
             dlg.Destroy()
             
             if result == wx.ID_YES:
-                # Load the last profile
                 self.load_profile(last_profile)
+                loaded_last = True
         
+        if not loaded_last:
+            self.add_menu("main_menu") # Add default if nothing loaded
+            
     def init_ui(self):
         panel = wx.Panel(self)
-        
-        # Menu Bar
         menubar = wx.MenuBar()
         
-        # File Menu
         file_menu = wx.Menu()
-        new_item = file_menu.Append(wx.ID_NEW, "New Profile", "Create a new profile")
-        open_item = file_menu.Append(wx.ID_OPEN, "Open Profile", "Open an existing profile")
+        new_item = file_menu.Append(wx.ID_NEW, "New Profile\tCtrl+N", "Create a new profile")
+        open_item = file_menu.Append(wx.ID_OPEN, "Open Profile\tCtrl+O", "Open an existing profile")
         save_item = file_menu.Append(wx.ID_SAVE, "Save Profile\tCtrl+S", "Save current profile")
         save_as_item = file_menu.Append(wx.ID_SAVEAS, "Save Profile As", "Save current profile with a new name")
         file_menu.AppendSeparator()
         exit_item = file_menu.Append(wx.ID_EXIT, "Exit", "Exit the application")
         
-        # Edit Menu
         edit_menu = wx.Menu()
-        copy_menu_item = edit_menu.Append(wx.ID_ANY, "Copy Menu\tCtrl+Shift+C", "Copy the current menu")
+        copy_menu_item = edit_menu.Append(wx.ID_ANY, "Copy Menu", "Copy the current menu") # Ctrl+Shift+C might conflict
+        paste_menu_item = edit_menu.Append(wx.ID_ANY, "Paste Menu", "Paste a copied menu")
+        edit_menu.AppendSeparator()
         duplicate_menu_item = edit_menu.Append(wx.ID_ANY, "Duplicate Menu", "Duplicate the current menu")
         rename_menu_item = edit_menu.Append(wx.ID_ANY, "Rename Menu", "Rename the current menu")
         
-        # Tools Menu
         tools_menu = wx.Menu()
         test_item = tools_menu.Append(wx.ID_ANY, "Test Current Menu", "Test the detection of the current menu")
         export_py_item = tools_menu.Append(wx.ID_ANY, "Export as Python", "Export profile as Python code")
         
-        # Help Menu
         help_menu = wx.Menu()
         about_item = help_menu.Append(wx.ID_ABOUT, "About", "About this application")
         
-        # Bind file menu events
         self.Bind(wx.EVT_MENU, self.on_new, new_item)
         self.Bind(wx.EVT_MENU, self.on_open, open_item)
         self.Bind(wx.EVT_MENU, self.on_save, save_item)
         self.Bind(wx.EVT_MENU, self.on_save_as, save_as_item)
         self.Bind(wx.EVT_MENU, self.on_exit, exit_item)
         
-        # Bind edit menu events
         self.Bind(wx.EVT_MENU, self.on_copy_menu_menu_item, copy_menu_item)
+        self.Bind(wx.EVT_MENU, self.on_paste_menu_menu_item, paste_menu_item) # Bind paste
         self.Bind(wx.EVT_MENU, self.on_duplicate_menu, duplicate_menu_item)
         self.Bind(wx.EVT_MENU, self.on_rename_menu, rename_menu_item)
         
-        # Bind tools menu events
         self.Bind(wx.EVT_MENU, self.on_test_menu, test_item)
         self.Bind(wx.EVT_MENU, self.on_export_python, export_py_item)
-        
-        # Bind help menu events
         self.Bind(wx.EVT_MENU, self.on_about, about_item)
         
-        menubar.Append(file_menu, "&File")
-        menubar.Append(edit_menu, "&Edit")
-        menubar.Append(tools_menu, "&Tools")
-        menubar.Append(help_menu, "&Help")
+        menubar.Append(file_menu, "&File"); menubar.Append(edit_menu, "&Edit")
+        menubar.Append(tools_menu, "&Tools"); menubar.Append(help_menu, "&Help")
         self.SetMenuBar(menubar)
         
-        # Main layout
         main_sizer = wx.BoxSizer(wx.VERTICAL)
-        
-        # Top controls for adding menus
         top_sizer = wx.BoxSizer(wx.HORIZONTAL)
         menu_label = wx.StaticText(panel, label="Menu ID:")
         self.menu_id_ctrl = wx.TextCtrl(panel)
         add_menu_btn = wx.Button(panel, label="Add Menu")
-        add_menu_btn.Bind(wx.EVT_BUTTON, self.on_add_menu)
+        add_menu_btn.Bind(wx.EVT_BUTTON, self.on_add_menu_button) # Renamed handler
         
-        top_sizer.Add(menu_label, flag=wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, border=5)
-        top_sizer.Add(self.menu_id_ctrl, proportion=1, flag=wx.RIGHT, border=5)
-        top_sizer.Add(add_menu_btn)
+        top_sizer.Add(menu_label, 0, wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, 5)
+        top_sizer.Add(self.menu_id_ctrl, 1, wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, 5) # Proportion 1
+        top_sizer.Add(add_menu_btn, 0, wx.ALIGN_CENTER_VERTICAL)
+        main_sizer.Add(top_sizer, 0, wx.EXPAND | wx.ALL, 10)
         
-        main_sizer.Add(top_sizer, flag=wx.EXPAND | wx.ALL, border=10)
-        
-        # Notebook for menus
         self.notebook = wx.Notebook(panel)
-        main_sizer.Add(self.notebook, proportion=1, flag=wx.EXPAND | wx.ALL, border=10)
-        
+        main_sizer.Add(self.notebook, 1, wx.EXPAND | wx.ALL, 10)
         panel.SetSizer(main_sizer)
         
-        # Status Bar
         self.statusbar = self.CreateStatusBar()
         self.statusbar.SetStatusText("New Profile")
-        
-        # Bind close event
         self.Bind(wx.EVT_CLOSE, self.on_close)
     
     def is_profile_empty(self):
-        """Check if the current profile is essentially empty"""
-        # An empty profile has no menus or just a default main_menu with no items/conditions
-        if not self.profile_data:
-            return True
-        
+        if not self.profile_data: return True
         if len(self.profile_data) == 1 and 'main_menu' in self.profile_data:
             main_menu = self.profile_data['main_menu']
-            # Check if the main menu has any meaningful content
-            if not main_menu.get('items') and not main_menu.get('conditions'):
+            if not main_menu.get('items') and not main_menu.get('conditions') and not main_menu.get('is_manual'):
                 return True
-        
         return False
     
     def save_config(self):
-        """Save configuration including last opened profile"""
-        # Get the directory where the script is located
         script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         config_dir = os.path.join(script_dir, 'pflib')
         os.makedirs(config_dir, exist_ok=True)
-        
         config_path = os.path.join(config_dir, 'config.json')
-        config = {
-            'last_profile': self.current_file
-        }
-        
+        config = {'last_profile': self.current_file}
         try:
-            with open(config_path, 'w') as file:
-                json.dump(config, file)
-        except Exception as e:
-            print(f"Failed to save config: {e}")
+            with open(config_path, 'w') as file: json.dump(config, file)
+        except Exception as e: print(f"Failed to save config: {e}")
     
     def load_config(self):
-        """Load configuration including last opened profile"""
-        # Get the directory where the script is located
         script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         config_dir = os.path.join(script_dir, 'pflib')
         config_path = os.path.join(config_dir, 'config.json')
-        config = {
-            'last_profile': None
-        }
-        
+        config = {'last_profile': None}
         try:
             if os.path.exists(config_path):
-                with open(config_path, 'r') as file:
-                    config.update(json.load(file))
-        except Exception as e:
-            print(f"Failed to load config: {e}")
-        
+                with open(config_path, 'r') as file: config.update(json.load(file))
+        except Exception as e: print(f"Failed to load config: {e}")
         return config
     
     def load_profile(self, path):
-        """Load a profile from the given path"""
         try:
-            with open(path, 'r') as file:
-                self.profile_data = json.load(file)
-            
+            with open(path, 'r') as file: self.profile_data = json.load(file)
             self.current_file = path
             self.is_changed = False
             
-            # Clear notebook
-            while self.notebook.GetPageCount() > 0:
-                self.notebook.DeletePage(0)
+            while self.notebook.GetPageCount() > 0: self.notebook.DeletePage(0)
             
-            # Add pages for each menu
+            # Ensure default fields exist for older profiles
+            for menu_id, menu_data in self.profile_data.items():
+                menu_data.setdefault("is_manual", False)
+                menu_data.setdefault("reset_index", True)
+                menu_data.setdefault("reset_group", "default")
+                menu_data.setdefault("group_order_indices", {"default": 0}) # Add this
+                menu_data.setdefault("conditions", [])
+                menu_data.setdefault("items", [])
+                for item in menu_data["items"]:
+                    while len(item) < 11: # Ensure 11 fields for items
+                        if len(item) == 6: item.append([])    # ocr_regions
+                        elif len(item) == 7: item.append(None) # custom_announcement
+                        elif len(item) == 8: item.append(0)    # index
+                        elif len(item) == 9: item.append([])    # conditions
+                        elif len(item) == 10: item.append(0)   # ocr_delay_ms
+                        else: item.append(None)
+
+
             for menu_id, menu_data in self.profile_data.items():
                 menu_panel = MenuPanel(self.notebook, menu_id, menu_data, self)
                 self.notebook.AddPage(menu_panel, menu_id)
             
-            # Update UI
             self.SetTitle(f"{APP_TITLE} v{APP_VERSION} - {os.path.basename(path)}")
             self.statusbar.SetStatusText(f"Loaded: {path}")
-            
-            # Save the config with the new last profile
             self.save_config()
-            
         except Exception as e:
             wx.MessageBox(f"Error loading profile: {str(e)}", "Error", wx.ICON_ERROR)
     
-    def on_copy_menu_menu_item(self, event):
-        """Handle copy menu menu item"""
-        self.copy_current_menu()
-    
+    def on_copy_menu_menu_item(self, event): self.copy_current_menu()
+    def on_paste_menu_menu_item(self, event): self.paste_menu() # Added handler
+
     def on_duplicate_menu(self, event):
-        """Duplicate the current menu"""
-        # First copy the menu
-        self.copy_current_menu()
+        current_tab_idx = self.notebook.GetSelection()
+        if current_tab_idx == -1:
+            wx.MessageBox("No menu selected to duplicate.", "Error", wx.ICON_ERROR); return
         
-        # Then paste it with a suggested name
-        if not self.clipboard['menu']:
-            wx.MessageBox("No menu to duplicate", "Cannot Duplicate", wx.ICON_INFORMATION)
-            return
+        current_menu_panel = self.notebook.GetPage(current_tab_idx)
+        orig_id = current_menu_panel.menu_id
         
-        # Get original menu ID and data
-        orig_id = self.clipboard['menu']['id']
-        menu_data = copy.deepcopy(self.clipboard['menu']['data'])
+        # Create a deep copy of the menu data
+        menu_data_to_copy = copy.deepcopy(self.profile_data[orig_id])
         
-        # Create a suggested name
         suggested_name = f"{orig_id}_copy"
         counter = 1
         while suggested_name in self.profile_data:
-            suggested_name = f"{orig_id}_copy{counter}"
-            counter += 1
+            suggested_name = f"{orig_id}_copy{counter}"; counter += 1
         
-        # Ask for new menu ID
-        dialog = wx.TextEntryDialog(
-            self, 
-            f"Enter name for the duplicated menu (original: {orig_id}):",
-            "Duplicate Menu", 
-            suggested_name
-        )
-        
+        dialog = wx.TextEntryDialog(self, f"Enter name for duplicated menu (original: {orig_id}):", "Duplicate Menu", suggested_name)
         if dialog.ShowModal() == wx.ID_OK:
             new_id = dialog.GetValue().strip()
-            dialog.Destroy()
-            
-            if not new_id:
-                wx.MessageBox("Menu ID cannot be empty", "Error", wx.ICON_ERROR)
-                return
-                
+            if not new_id: wx.MessageBox("Menu ID cannot be empty.", "Error", wx.ICON_ERROR); dialog.Destroy(); return
             if new_id in self.profile_data:
-                if wx.MessageBox(f"Menu '{new_id}' already exists. Replace it?", 
-                              "Confirm", wx.ICON_QUESTION | wx.YES_NO) != wx.YES:
-                    return
-                
-                # Remove existing tab for this menu
-                self.delete_menu(new_id)
+                if wx.MessageBox(f"Menu '{new_id}' already exists. Replace?", "Confirm", wx.ICON_QUESTION | wx.YES_NO) != wx.YES:
+                    dialog.Destroy(); return
+                self.delete_menu(new_id) # Delete existing if replacing
             
-            # Add the new menu with copied data
-            self.profile_data[new_id] = menu_data
+            self.profile_data[new_id] = menu_data_to_copy # Use the deep copied data
             menu_panel = MenuPanel(self.notebook, new_id, self.profile_data[new_id], self)
             self.notebook.AddPage(menu_panel, new_id)
             self.notebook.SetSelection(self.notebook.GetPageCount() - 1)
-            
             self.mark_profile_changed()
             self.statusbar.SetStatusText(f"Duplicated menu as: {new_id}")
-        else:
-            dialog.Destroy()
+        dialog.Destroy()
     
     def on_rename_menu(self, event):
-        """Rename the current menu"""
-        current_tab = self.notebook.GetSelection()
-        if current_tab == -1:
-            wx.MessageBox("No menu selected", "Cannot Rename", wx.ICON_INFORMATION)
-            return
-            
-        menu_panel = self.notebook.GetPage(current_tab)
+        current_tab_idx = self.notebook.GetSelection()
+        if current_tab_idx == -1: wx.MessageBox("No menu selected.", "Error", wx.ICON_ERROR); return
+        menu_panel = self.notebook.GetPage(current_tab_idx)
         old_id = menu_panel.menu_id
         
-        # Ask for new menu ID
-        dialog = wx.TextEntryDialog(
-            self, 
-            f"Enter new name for the menu (current: {old_id}):",
-            "Rename Menu", 
-            old_id
-        )
-        
+        dialog = wx.TextEntryDialog(self, f"New name for menu (current: {old_id}):", "Rename Menu", old_id)
         if dialog.ShowModal() == wx.ID_OK:
             new_id = dialog.GetValue().strip()
-            dialog.Destroy()
-            
-            if not new_id:
-                wx.MessageBox("Menu ID cannot be empty", "Error", wx.ICON_ERROR)
-                return
-                
-            if new_id == old_id:
-                # No change
-                return
-                
+            if not new_id: wx.MessageBox("Menu ID cannot be empty.", "Error", wx.ICON_ERROR); dialog.Destroy(); return
+            if new_id == old_id: dialog.Destroy(); return
             if new_id in self.profile_data:
-                if wx.MessageBox(f"Menu '{new_id}' already exists. Replace it?", 
-                              "Confirm", wx.ICON_QUESTION | wx.YES_NO) != wx.YES:
-                    return
-                
-                # Remove existing tab for this menu
+                if wx.MessageBox(f"Menu '{new_id}' already exists. Replace?", "Confirm", wx.ICON_QUESTION | wx.YES_NO) != wx.YES:
+                    dialog.Destroy(); return
                 self.delete_menu(new_id)
             
-            # Get the menu data
-            menu_data = self.profile_data[old_id]
+            menu_data = self.profile_data.pop(old_id) # Remove old, get data
+            self.profile_data[new_id] = menu_data # Add with new ID
             
-            # Remove the old menu
-            del self.profile_data[old_id]
-            
-            # Add with new ID
-            self.profile_data[new_id] = menu_data
-            
-            # Update the tab
-            self.notebook.DeletePage(current_tab)
-            menu_panel = MenuPanel(self.notebook, new_id, self.profile_data[new_id], self)
-            self.notebook.InsertPage(current_tab, menu_panel, new_id)
-            self.notebook.SetSelection(current_tab)
+            # Update tab
+            self.notebook.DeletePage(current_tab_idx)
+            new_menu_panel = MenuPanel(self.notebook, new_id, self.profile_data[new_id], self)
+            self.notebook.InsertPage(current_tab_idx, new_menu_panel, new_id) # Insert at same position
+            self.notebook.SetSelection(current_tab_idx)
             
             self.mark_profile_changed()
             self.statusbar.SetStatusText(f"Renamed menu from {old_id} to {new_id}")
-        else:
-            dialog.Destroy()
+        dialog.Destroy()
     
     def copy_current_menu(self):
-        """Copy the currently selected menu"""
-        current_tab = self.notebook.GetSelection()
-        if current_tab == -1:
-            return
-            
-        menu_panel = self.notebook.GetPage(current_tab)
+        current_tab_idx = self.notebook.GetSelection()
+        if current_tab_idx == -1: return
+        menu_panel = self.notebook.GetPage(current_tab_idx)
         menu_id = menu_panel.menu_id
-        
-        # Make a deep copy to avoid reference issues
-        self.clipboard['menu'] = {
-            'id': menu_id,
-            'data': copy.deepcopy(self.profile_data[menu_id])
-        }
-        
+        self.clipboard['menu'] = {'id': menu_id, 'data': copy.deepcopy(self.profile_data[menu_id])}
         self.statusbar.SetStatusText(f"Copied menu: {menu_id}")
 
     def paste_menu(self):
-        """Paste a previously copied menu"""
-        if not self.clipboard['menu']:
-            wx.MessageBox("No menu in clipboard", "Cannot Paste", wx.ICON_INFORMATION)
-            return
-        
-        # Get original menu ID and data
+        if not self.clipboard['menu']: wx.MessageBox("No menu in clipboard.", "Error", wx.ICON_INFORMATION); return
         orig_id = self.clipboard['menu']['id']
-        menu_data = copy.deepcopy(self.clipboard['menu']['data'])
+        menu_data_to_paste = copy.deepcopy(self.clipboard['menu']['data'])
         
-        # Ask for new menu ID
-        dialog = wx.TextEntryDialog(
-            self, 
-            f"Enter new ID for the copied menu (original: {orig_id}):",
-            "Paste Menu", 
-            f"{orig_id}_copy"
-        )
-        
+        suggested_name = f"{orig_id}_pasted"
+        counter = 1
+        while suggested_name in self.profile_data:
+            suggested_name = f"{orig_id}_pasted{counter}"; counter += 1
+
+        dialog = wx.TextEntryDialog(self, f"New ID for pasted menu (original: {orig_id}):", "Paste Menu", suggested_name)
         if dialog.ShowModal() == wx.ID_OK:
             new_id = dialog.GetValue().strip()
-            dialog.Destroy()
-            
-            if not new_id:
-                wx.MessageBox("Menu ID cannot be empty", "Error", wx.ICON_ERROR)
-                return
-                
+            if not new_id: wx.MessageBox("Menu ID cannot be empty.", "Error", wx.ICON_ERROR); dialog.Destroy(); return
             if new_id in self.profile_data:
-                if wx.MessageBox(f"Menu '{new_id}' already exists. Replace it?", 
-                              "Confirm", wx.ICON_QUESTION | wx.YES_NO) != wx.YES:
-                    return
-                
-                # Remove existing tab for this menu
+                if wx.MessageBox(f"Menu '{new_id}' already exists. Replace?", "Confirm", wx.ICON_QUESTION | wx.YES_NO) != wx.YES:
+                    dialog.Destroy(); return
                 self.delete_menu(new_id)
             
-            # Add the new menu with copied data
-            self.profile_data[new_id] = menu_data
+            self.profile_data[new_id] = menu_data_to_paste
             menu_panel = MenuPanel(self.notebook, new_id, self.profile_data[new_id], self)
             self.notebook.AddPage(menu_panel, new_id)
             self.notebook.SetSelection(self.notebook.GetPageCount() - 1)
-            
             self.mark_profile_changed()
             self.statusbar.SetStatusText(f"Pasted menu as: {new_id}")
-        else:
-            dialog.Destroy()
+        dialog.Destroy()
     
-    def on_add_menu(self, event):
-        """Add a new menu to the profile"""
+    def on_add_menu_button(self, event): # Renamed
         menu_id = self.menu_id_ctrl.GetValue().strip()
-        
-        if not menu_id:
-            wx.MessageBox("Please enter a menu ID", "Error", wx.ICON_ERROR)
-            return
-            
-        if menu_id in self.profile_data:
-            wx.MessageBox(f"Menu '{menu_id}' already exists", "Error", wx.ICON_ERROR)
-            return
-            
+        if not menu_id: wx.MessageBox("Please enter a menu ID.", "Error", wx.ICON_ERROR); return
+        if menu_id in self.profile_data: wx.MessageBox(f"Menu '{menu_id}' already exists.", "Error", wx.ICON_ERROR); return
         self.add_menu(menu_id)
         self.menu_id_ctrl.Clear()
     
     def add_menu(self, menu_id):
-        """Add a menu to the profile and create a tab for it"""
         self.profile_data[menu_id] = {
-            "conditions": [],
-            "items": []
+            "conditions": [], "items": [], "is_manual": False,
+            "reset_index": True, "reset_group": "default",
+            "group_order_indices": {"default": 0} # Initialize group order
         }
-        
         menu_panel = MenuPanel(self.notebook, menu_id, self.profile_data[menu_id], self)
         self.notebook.AddPage(menu_panel, menu_id)
         self.notebook.SetSelection(self.notebook.GetPageCount() - 1)
-        
         self.mark_profile_changed()
     
-    def delete_menu(self, menu_id):
-        """Delete a menu from the profile and remove its tab"""
-        if menu_id not in self.profile_data:
-            return
-            
-        # Find the tab index
+    def delete_menu(self, menu_id_to_delete):
+        if menu_id_to_delete not in self.profile_data: return
         for i in range(self.notebook.GetPageCount()):
             page = self.notebook.GetPage(i)
-            if hasattr(page, 'menu_id') and page.menu_id == menu_id:
-                self.notebook.DeletePage(i)
-                break
-        
-        # Remove from profile data
-        del self.profile_data[menu_id]
+            if hasattr(page, 'menu_id') and page.menu_id == menu_id_to_delete:
+                self.notebook.DeletePage(i); break
+        del self.profile_data[menu_id_to_delete]
         self.mark_profile_changed()
     
     def mark_profile_changed(self):
-        """Mark the profile as changed and update UI accordingly"""
         self.is_changed = True
-        
-        # Update title bar
         title = self.GetTitle()
-        if not title.startswith('*'):
-            self.SetTitle('*' + title)
-            
-        # Update status bar
-        filename = self.current_file or "New Profile"
+        if not title.startswith('*'): self.SetTitle('*' + title)
+        filename = os.path.basename(self.current_file) if self.current_file else "New Profile"
         self.statusbar.SetStatusText(f"Modified: {filename}")
     
     def on_new(self, event):
-        """Create a new profile"""
         if self.is_changed and not self.is_profile_empty():
-            if wx.MessageBox("Current profile has unsaved changes. Continue?", 
-                           "Please confirm", wx.ICON_QUESTION | wx.YES_NO) != wx.YES:
-                return
-        
+            if wx.MessageBox("Unsaved changes. Continue?", "Confirm", wx.ICON_QUESTION | wx.YES_NO) != wx.YES: return
         self.profile_data = {}
         self.current_file = None
         self.is_changed = False
-        
-        # Clear notebook
-        while self.notebook.GetPageCount() > 0:
-            self.notebook.DeletePage(0)
-        
-        # Add default main menu
+        while self.notebook.GetPageCount() > 0: self.notebook.DeletePage(0)
         self.add_menu("main_menu")
-        
-        # Update UI
         self.SetTitle(f"{APP_TITLE} v{APP_VERSION} - New Profile")
         self.statusbar.SetStatusText("New Profile")
     
     def on_open(self, event):
-        """Open an existing profile"""
         if self.is_changed and not self.is_profile_empty():
-            if wx.MessageBox("Current profile has unsaved changes. Continue?", 
-                           "Please confirm", wx.ICON_QUESTION | wx.YES_NO) != wx.YES:
-                return
-        
+            if wx.MessageBox("Unsaved changes. Continue?", "Confirm", wx.ICON_QUESTION | wx.YES_NO) != wx.YES: return
         with wx.FileDialog(self, "Open Profile", defaultDir=self.profiles_dir,
                          wildcard="JSON files (*.json)|*.json",
-                         style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as fileDialog:
-            
-            if fileDialog.ShowModal() == wx.ID_CANCEL:
-                return
-            
-            # Get the path
-            path = fileDialog.GetPath()
-            self.load_profile(path)
+                         style=wx.FD_OPEN | wx.FD_FILE_MUST_EXIST) as fd:
+            if fd.ShowModal() == wx.ID_CANCEL: return
+            self.load_profile(fd.GetPath())
     
     def on_save(self, event):
-        """Save the current profile"""
-        if not self.current_file:
-            self.on_save_as(event)
-            return
-            
+        if not self.current_file: self.on_save_as(event); return
+        current_tab_idx = self.notebook.GetSelection()
+        if current_tab_idx != -1:
+            current_page = self.notebook.GetPage(current_tab_idx)
+            if hasattr(current_page, 'on_save'): current_page.on_save() # Save active tab's data
         try:
-            # Ensure all current page data is saved before writing to file
-            current_tab = self.notebook.GetSelection()
-            if current_tab != -1:
-                current_page = self.notebook.GetPage(current_tab)
-                if hasattr(current_page, 'on_save'):
-                    current_page.on_save()
-            
-            with open(self.current_file, 'w') as file:
-                json.dump(self.profile_data, file, indent=2)
-            
+            with open(self.current_file, 'w') as file: json.dump(self.profile_data, file, indent=2)
             self.is_changed = False
-            
-            # Update UI
             self.SetTitle(f"{APP_TITLE} v{APP_VERSION} - {os.path.basename(self.current_file)}")
             self.statusbar.SetStatusText(f"Saved: {self.current_file}")
-            
-            # Save the config with the new last profile
             self.save_config()
-            
-        except Exception as e:
-            wx.MessageBox(f"Error saving profile: {str(e)}", "Error", wx.ICON_ERROR)
+        except Exception as e: wx.MessageBox(f"Error saving: {e}", "Error", wx.ICON_ERROR)
     
     def on_save_as(self, event):
-        """Save the current profile with a new name"""
-        with wx.FileDialog(self, "Save Profile", defaultDir=self.profiles_dir,
+        current_tab_idx = self.notebook.GetSelection()
+        if current_tab_idx != -1: # Save active tab's data before Save As
+            current_page = self.notebook.GetPage(current_tab_idx)
+            if hasattr(current_page, 'on_save'): current_page.on_save()
+
+        with wx.FileDialog(self, "Save Profile As", defaultDir=self.profiles_dir,
                          wildcard="JSON files (*.json)|*.json",
-                         style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as fileDialog:
-            
-            if fileDialog.ShowModal() == wx.ID_CANCEL:
-                return
-            
-            # Get the path
-            path = fileDialog.GetPath()
-            
-            # Add .json extension if missing
-            if not path.endswith('.json'):
-                path += '.json'
-            
+                         style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as fd:
+            if fd.ShowModal() == wx.ID_CANCEL: return
+            path = fd.GetPath()
+            if not path.lower().endswith('.json'): path += '.json'
             try:
-                with open(path, 'w') as file:
-                    json.dump(self.profile_data, file, indent=2)
-                
+                with open(path, 'w') as file: json.dump(self.profile_data, file, indent=2)
                 self.current_file = path
                 self.is_changed = False
-                
-                # Update UI
                 self.SetTitle(f"{APP_TITLE} v{APP_VERSION} - {os.path.basename(path)}")
                 self.statusbar.SetStatusText(f"Saved: {path}")
-                
-                # Save the config with the new last profile
                 self.save_config()
-                
-            except Exception as e:
-                wx.MessageBox(f"Error saving profile: {str(e)}", "Error", wx.ICON_ERROR)
+            except Exception as e: wx.MessageBox(f"Error saving as: {e}", "Error", wx.ICON_ERROR)
     
     def on_test_menu(self, event):
-        """Test the detection of the current menu"""
-        # Get the currently selected menu
-        current_tab = self.notebook.GetSelection()
-        if current_tab == -1:
-            wx.MessageBox("No menu selected", "Error", wx.ICON_ERROR)
-            return
-            
-        menu_panel = self.notebook.GetPage(current_tab)
+        current_tab_idx = self.notebook.GetSelection()
+        if current_tab_idx == -1: wx.MessageBox("No menu selected.", "Error", wx.ICON_ERROR); return
+        menu_panel = self.notebook.GetPage(current_tab_idx)
         menu_id = menu_panel.menu_id
         menu_data = self.profile_data[menu_id]
         
-        if "conditions" not in menu_data or not menu_data["conditions"]:
-            wx.MessageBox(f"Menu '{menu_id}' has no conditions to test", "Error", wx.ICON_ERROR)
-            return
+        if menu_data.get("is_manual", False):
+            wx.MessageBox(f"Menu '{menu_id}' is manual and cannot be tested by conditions.", "Info", wx.ICON_INFORMATION); return
+        if not menu_data.get("conditions"):
+            wx.MessageBox(f"Menu '{menu_id}' has no conditions.", "Error", wx.ICON_ERROR); return
         
-        # Create a dialog to show test results
         dialog = wx.Dialog(self, title=f"Testing Menu: {menu_id}", size=(500, 400))
-        panel = wx.Panel(dialog)
-        sizer = wx.BoxSizer(wx.VERTICAL)
-        
-        # Status text
+        panel = wx.Panel(dialog); sizer = wx.BoxSizer(wx.VERTICAL)
         status_text = wx.StaticText(panel, label="Testing menu conditions...")
-        sizer.Add(status_text, flag=wx.ALL, border=10)
-        
-        # Results list
+        sizer.Add(status_text, 0, wx.ALL, 10)
         results_list = wx.ListCtrl(panel, style=wx.LC_REPORT)
-        results_list.InsertColumn(0, "Condition", width=150)
-        results_list.InsertColumn(1, "Result", width=100)
-        results_list.InsertColumn(2, "Details", width=200)
-        
-        sizer.Add(results_list, proportion=1, flag=wx.EXPAND | wx.ALL, border=10)
-        
-        # Overall result
-        overall_result = wx.StaticText(panel, label="")
-        overall_result.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
-        sizer.Add(overall_result, flag=wx.ALL, border=10)
-        
-        # Close button
-        close_btn = wx.Button(panel, wx.ID_CLOSE, "Close")
-        close_btn.Bind(wx.EVT_BUTTON, lambda evt: dialog.Close())
-        sizer.Add(close_btn, flag=wx.ALIGN_RIGHT | wx.ALL, border=10)
-        
+        results_list.InsertColumn(0, "Condition", width=150); results_list.InsertColumn(1, "Result", width=100); results_list.InsertColumn(2, "Details", width=200)
+        sizer.Add(results_list, 1, wx.EXPAND | wx.ALL, 10)
+        overall_result_text = wx.StaticText(panel, label="") # Renamed
+        overall_result_text.SetFont(wx.Font(10, wx.FONTFAMILY_DEFAULT, wx.FONTSTYLE_NORMAL, wx.FONTWEIGHT_BOLD))
+        sizer.Add(overall_result_text, 0, wx.ALL, 10)
+        close_btn = wx.Button(panel, wx.ID_CLOSE, "Close"); close_btn.Bind(wx.EVT_BUTTON, lambda evt: dialog.Close())
+        sizer.Add(close_btn, 0, wx.ALIGN_RIGHT | wx.ALL, 10)
         panel.SetSizer(sizer)
         
-        # Start the test in a separate thread to avoid freezing UI
-        condition_checker = MenuCondition()
+        # Pass the editor's OCR handler to MenuCondition for testing
+        condition_checker = MenuCondition(ocr_handler=self.editor_ocr_handler)
         
-        def run_test():
-            # Take screenshot
-            screenshot = np.array(pyautogui.screenshot())
-            
-            # Test each condition
-            all_passed = True
-            
-            for i, condition in enumerate(menu_data["conditions"]):
-                condition_type = condition["type"]
-                
-                try:
-                    # Check the condition
-                    result = condition_checker.check_condition(condition, screenshot)
+        def run_test_thread():
+            try:
+                screenshot_pil = self.screen_capture.capture() # Use unified screen capture
+                all_passed = True
+                for i, condition_item in enumerate(menu_data["conditions"]): # Renamed
+                    result = condition_checker.check_condition(condition_item, screenshot_pil)
                     
-                    # Add to results list
-                    if condition_type == "pixel_color":
-                        description = f"Pixel at ({condition['x']}, {condition['y']})"
-                    elif condition_type == "pixel_region_color":
-                        description = f"Region ({condition['x1']}, {condition['y1']}) to ({condition['x2']}, {condition['y2']})"
-                    else:
-                        description = str(condition)
-                    
-                    result_text = "PASSED" if result else "FAILED"
-                    details = f"RGB{condition['color']} +/-{condition['tolerance']}"
-                    
-                    # Update UI from main thread
-                    wx.CallAfter(lambda: results_list.InsertItem(i, description))
-                    wx.CallAfter(lambda: results_list.SetItem(i, 1, result_text))
-                    wx.CallAfter(lambda: results_list.SetItem(i, 2, details))
-                    
-                    # Update status
+                    cond_type_str = condition_item.get("type", "N/A")
+                    details_str = str(condition_item)[:50] # Basic details
+                    if condition_item.get("negate"): cond_type_str = "NOT " + cond_type_str
+
+                    wx.CallAfter(results_list.InsertItem, i, cond_type_str)
+                    wx.CallAfter(results_list.SetItem, i, 1, "PASSED" if result else "FAILED")
+                    wx.CallAfter(results_list.SetItem, i, 2, details_str)
                     all_passed = all_passed and result
-                    
-                except Exception as e:
-                    wx.CallAfter(lambda: results_list.InsertItem(i, str(condition)))
-                    wx.CallAfter(lambda: results_list.SetItem(i, 1, "ERROR"))
-                    wx.CallAfter(lambda: results_list.SetItem(i, 2, str(e)))
-                    all_passed = False
-            
-            # Update final result
-            if all_passed:
-                wx.CallAfter(lambda: overall_result.SetLabel("RESULT: ALL CONDITIONS PASSED - Menu is active"))
-                wx.CallAfter(lambda: overall_result.SetForegroundColour(wx.Colour(0, 128, 0)))  # Green
-            else:
-                wx.CallAfter(lambda: overall_result.SetLabel("RESULT: SOME CONDITIONS FAILED - Menu is not active"))
-                wx.CallAfter(lambda: overall_result.SetForegroundColour(wx.Colour(192, 0, 0)))  # Red
-            
-            wx.CallAfter(lambda: status_text.SetLabel("Test completed."))
-        
-        # Start the test thread
-        test_thread = threading.Thread(target=run_test)
-        test_thread.daemon = True
-        test_thread.start()
-        
-        # Show the dialog
-        dialog.ShowModal()
-        dialog.Destroy()
+                
+                if all_passed:
+                    wx.CallAfter(overall_result_text.SetLabel, "RESULT: ALL CONDITIONS PASSED - Menu is active")
+                    wx.CallAfter(overall_result_text.SetForegroundColour, wx.Colour(0, 128, 0))
+                else:
+                    wx.CallAfter(overall_result_text.SetLabel, "RESULT: SOME FAILED - Menu not active")
+                    wx.CallAfter(overall_result_text.SetForegroundColour, wx.Colour(192, 0, 0))
+                wx.CallAfter(status_text.SetLabel, "Test completed.")
+            except Exception as e_test:
+                 wx.CallAfter(status_text.SetLabel, f"Test Error: {e_test}")
+
+        test_thread = threading.Thread(target=run_test_thread); test_thread.daemon = True; test_thread.start()
+        dialog.ShowModal(); dialog.Destroy()
     
     def on_export_python(self, event):
-        """Export the profile as Python code"""
-        if not self.profile_data:
-            wx.MessageBox("No profile data to export", "Error", wx.ICON_ERROR)
-            return
-            
+        if not self.profile_data: wx.MessageBox("No profile data to export.", "Error", wx.ICON_ERROR); return
         with wx.FileDialog(self, "Export as Python", wildcard="Python files (*.py)|*.py",
-                         style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as fileDialog:
-            
-            if fileDialog.ShowModal() == wx.ID_CANCEL:
-                return
-            
-            # Get the path
-            path = fileDialog.GetPath()
-            
-            # Add .py extension if missing
-            if not path.endswith('.py'):
-                path += '.py'
-            
+                         style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT) as fd:
+            if fd.ShowModal() == wx.ID_CANCEL: return
+            path = fd.GetPath()
+            if not path.lower().endswith('.py'): path += '.py'
             try:
-                # Generate Python code
                 py_code = self._generate_python_code()
-                
-                with open(path, 'w') as file:
-                    file.write(py_code)
-                
+                with open(path, 'w') as file: file.write(py_code)
                 self.statusbar.SetStatusText(f"Exported to: {path}")
-                
-                # Show success message with option to open file
-                if wx.MessageBox(f"Profile exported to {path}\n\nOpen the file?", 
-                               "Export Successful", wx.YES_NO | wx.ICON_QUESTION) == wx.YES:
-                    # Open the file with default system editor
+                if wx.MessageBox(f"Exported to {path}\nOpen file?", "Success", wx.YES_NO | wx.ICON_QUESTION) == wx.YES:
+                    import os
+                    import sys
                     import subprocess
-                    import platform
-                    
-                    if platform.system() == 'Windows':
-                        os.startfile(path)
-                    elif platform.system() == 'Darwin':  # macOS
-                        subprocess.call(('open', path))
-                    else:  # Linux
-                        subprocess.call(('xdg-open', path))
-                
-            except Exception as e:
-                wx.MessageBox(f"Error exporting profile: {str(e)}", "Error", wx.ICON_ERROR)
+                    if os.name == 'nt': os.startfile(path) # Windows
+                    elif sys.platform == 'darwin': subprocess.call(('open', path)) # macOS
+                    else: subprocess.call(('xdg-open', path)) # Linux
+            except Exception as e: wx.MessageBox(f"Error exporting: {e}", "Error", wx.ICON_ERROR)
     
     def _generate_python_code(self):
-        """Generate Python code from the profile data"""
+        # ... (This method should be updated if data structures changed significantly,
+        #      especially if elements are now dicts instead of lists) ...
+        # For now, assuming the core structure for export is similar.
+        # Key change: include "is_manual", "reset_index", "reset_group", "group_order_indices"
+        # and ensure all 11 fields for items are handled if they exist.
         code = [
-            '"""',
-            f'UI Menu Profile - Generated by {APP_TITLE} v{APP_VERSION}',
-            f'Generated on: {time.strftime("%Y-%m-%d %H:%M:%S")}',
-            'This file defines menu structures and detection conditions for navigation.',
-            '"""',
-            '',
-            '# Menu structure definition',
+            '"""', f'UI Menu Profile - Generated by {APP_TITLE} v{APP_VERSION}',
+            f'Generated on: {time.strftime("%Y-%m-%d %H:%M:%S")}', '"""', '',
             'menus = {'
         ]
-        
-        # Sort menu IDs to make output deterministic
         menu_ids = sorted(self.profile_data.keys())
-        
         for menu_id in menu_ids:
             menu_data = self.profile_data[menu_id]
-            
             code.append(f'    "{menu_id}": {{')
-            
-            # Add conditions
+            code.append(f'        "is_manual": {menu_data.get("is_manual", False)},')
+            code.append(f'        "reset_index": {menu_data.get("reset_index", True)},')
+            code.append(f'        "reset_group": "{menu_data.get("reset_group", "default")}",')
+            code.append(f'        "group_order_indices": {json.dumps(menu_data.get("group_order_indices", {"default":0}))},')
+
             if "conditions" in menu_data and menu_data["conditions"]:
                 code.append('        "conditions": [')
                 for condition in menu_data["conditions"]:
-                    condition_str = json.dumps(condition, indent=12)
-                    # Fix indentation in the JSON string
-                    condition_str = condition_str.replace('\n', '\n            ')
-                    code.append(f'            {condition_str},')
+                    code.append(f'            {json.dumps(condition)},')
                 code.append('        ],')
-            else:
-                code.append('        "conditions": [],')
+            else: code.append('        "conditions": [],')
             
-            # Add items
             if "items" in menu_data and menu_data["items"]:
                 code.append('        "items": [')
                 for item in menu_data["items"]:
-                    # Convert the item to a proper Python representation
-                    coords = item[0]
-                    name = item[1]
-                    elem_type = item[2]
-                    speaks = item[3]
-                    submenu = item[4]
-                    
-                    code.append(f'            (({coords[0]}, {coords[1]}), "{name}", "{elem_type}", {speaks}, {repr(submenu)}),')
+                    # Ensure item is a list and has enough elements before accessing
+                    item_str_parts = []
+                    if isinstance(item, list):
+                        item_str_parts.append(f"({item[0][0]}, {item[0][1]})" if len(item) > 0 and isinstance(item[0], (list, tuple)) and len(item[0]) == 2 else "(0,0)")
+                        item_str_parts.append(f'"{item[1]}"' if len(item) > 1 else '"Unknown"')
+                        item_str_parts.append(f'"{item[2]}"' if len(item) > 2 else '"button"')
+                        item_str_parts.append(f'{item[3]}' if len(item) > 3 else 'False')
+                        item_str_parts.append(f'{repr(item[4])}' if len(item) > 4 else 'None')
+                        item_str_parts.append(f'"{item[5]}"' if len(item) > 5 and item[5] else '"default"')
+                        item_str_parts.append(f'{json.dumps(item[6])}' if len(item) > 6 and item[6] else '[]')
+                        item_str_parts.append(f'{repr(item[7])}' if len(item) > 7 else 'None')
+                        item_str_parts.append(f'{item[8]}' if len(item) > 8 else '0')
+                        item_str_parts.append(f'{json.dumps(item[9])}' if len(item) > 9 and item[9] else '[]')
+                        item_str_parts.append(f'{item[10]}' if len(item) > 10 else '0')
+                        code.append(f'            [{", ".join(item_str_parts)}],')
+                    else: # Should not happen with proper data
+                        code.append(f'            # Malformed item: {item}')
+
                 code.append('        ],')
-            else:
-                code.append('        "items": [],')
-            
+            else: code.append('        "items": [],')
             code.append('    },')
-        
         code.append('}')
-        code.append('')
-        code.append('# Example usage:')
-        code.append('if __name__ == "__main__":')
+        # ... (Example usage remains same) ...
+        code.append('\nif __name__ == "__main__":')
         code.append('    import json')
         code.append('    print(f"Loaded {len(menus)} menus:")')
         code.append('    for menu_id, menu_data in menus.items():')
         code.append('        conditions = len(menu_data.get("conditions", []))')
         code.append('        items = len(menu_data.get("items", []))')
-        code.append('        print(f"  - {menu_id}: {conditions} conditions, {items} items")')
-        
+        code.append('        print(f"  - {menu_id}: {conditions} conditions, {items} items, Manual: {menu_data.get("is_manual", False)}")')
+
         return '\n'.join(code)
-    
+
     def on_about(self, event):
-        """Show the about dialog"""
         info = wx.adv.AboutDialogInfo()
-        info.SetName(APP_TITLE)
-        info.SetVersion(APP_VERSION)
-        info.SetDescription("The profile editor for MenuAccess")
-        info.SetCopyright("(C) 2025")
-        
-        try:
-            wx.adv.AboutBox(info)
-        except:
-            # Fallback if wx.adv is not available
-            wx.MessageBox(f"{APP_TITLE} v{APP_VERSION}\nThe profile editor for MenuAccess", "About", wx.OK | wx.ICON_INFORMATION)
+        info.SetName(APP_TITLE); info.SetVersion(APP_VERSION)
+        info.SetDescription("Profile editor for MenuAccess."); info.SetCopyright("(C) 2025")
+        try: wx.adv.AboutBox(info)
+        except: wx.MessageBox(f"{APP_TITLE} v{APP_VERSION}\nProfile editor for MenuAccess.", "About", wx.OK | wx.ICON_INFORMATION)
     
-    def on_exit(self, event):
-        """Exit the application"""
-        self.Close()
+    def on_exit(self, event): self.Close()
     
     def on_close(self, event):
-        """Handle window close event"""
         if self.is_changed and not self.is_profile_empty():
-            dlg = wx.MessageDialog(self, 
-                                  "Save changes before closing?",
-                                  "Please confirm",
-                                  wx.YES_NO | wx.CANCEL | wx.ICON_QUESTION)
-            result = dlg.ShowModal()
-            dlg.Destroy()
-            
-            if result == wx.ID_YES:
-                self.on_save(event)
-                event.Skip()  # Continue with close
-            elif result == wx.ID_NO:
-                event.Skip()  # Continue with close without saving
-            else:  # wx.ID_CANCEL
-                event.Veto()  # Stop the close
-        else:
-            event.Skip()  # No changes or empty profile, continue with close
+            dlg = wx.MessageDialog(self, "Save changes before closing?", "Confirm", wx.YES_NO | wx.CANCEL | wx.ICON_QUESTION)
+            result = dlg.ShowModal(); dlg.Destroy()
+            if result == wx.ID_YES: self.on_save(event); event.Skip()
+            elif result == wx.ID_NO: event.Skip()
+            else: event.Veto()
+        else: event.Skip()
+
+    def __del__(self):
+        # Ensure screen capture and OCR handler are shut down
+        if hasattr(self, 'screen_capture'):
+            self.screen_capture.close()
+        if hasattr(self, 'editor_ocr_handler') and self.editor_ocr_handler:
+            self.editor_ocr_handler.shutdown()
+        try:
+            super().__del__()
+        except:
+            pass
